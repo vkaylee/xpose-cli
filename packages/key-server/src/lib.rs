@@ -249,6 +249,32 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             Response::from_json(&serde_json::json!({"success": true}))
         })
+        .get_async("/api/stats", |_, ctx| async move {
+            let db = ctx.env.d1("DB")?;
+            let res = db.prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
+                .all()
+                .await?;
+            
+            let mut busy = 0;
+            let mut available = 0;
+            
+            let rows: Vec<serde_json::Value> = res.results()?;
+            for row in rows {
+                let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                let count = row.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                if status == "BUSY" {
+                    busy = count;
+                } else if status == "AVAILABLE" {
+                    available = count;
+                }
+            }
+
+            Response::from_json(&serde_json::json!({
+                "total": busy + available,
+                "busy": busy,
+                "available": available
+            }))
+        })
         .post_async("/api/telemetry", |mut req, _ctx| async move {
             let body: serde_json::Value = req.json().await?;
             console_log!("[Telemetry] Received report: {:?}", body);

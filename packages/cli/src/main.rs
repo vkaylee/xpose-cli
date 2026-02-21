@@ -144,7 +144,7 @@ async fn main() {
     let registry = registry::Registry::new();
 
     if let Some(Commands::Dashboard) = args.command {
-        let mut app = dashboard::DashboardApp::new();
+        let mut app = dashboard::DashboardApp::new(KEY_SERVER_URL.to_string());
         if let Err(e) = app.run() {
             eprintln!("Error running dashboard: {e}");
         }

@@ -1,4 +1,5 @@
 use crate::registry::{Registry, TunnelEntry};
+use crate::api::{ApiClient, GlobalStats};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -28,13 +29,16 @@ pub struct DashboardApp {
     registry: Registry,
     tunnels: Vec<TunnelEntry>,
     metrics: HashMap<u32, TunnelMetrics>,
+    global_stats: GlobalStats,
     table_state: TableState,
     should_quit: bool,
     metrics_client: reqwest::blocking::Client,
+    api_client: ApiClient,
+    tick_count: u64,
 }
 
 impl DashboardApp {
-    pub fn new() -> Self {
+    pub fn new(api_url: String) -> Self {
         let registry = Registry::new();
         let tunnels = registry.list_active();
         let mut table_state = TableState::default();
@@ -45,12 +49,15 @@ impl DashboardApp {
             registry,
             tunnels,
             metrics: HashMap::new(),
+            global_stats: GlobalStats::default(),
             table_state,
             should_quit: false,
             metrics_client: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_millis(200))
                 .build()
                 .unwrap(),
+            api_client: ApiClient::new(api_url),
+            tick_count: 0,
         }
     }
 
@@ -111,6 +118,14 @@ impl DashboardApp {
             self.table_state.select(Some(0));
         }
 
+        // Fetch global stats every 10 ticks (approx every 5s if tick_rate is 500ms)
+        if self.tick_count % 10 == 0 {
+            if let Ok(stats) = tokio::runtime::Handle::current().block_on(self.api_client.get_global_stats()) {
+                self.global_stats = stats;
+            }
+        }
+        self.tick_count = self.tick_count.wrapping_add(1);
+
         // Fetch metrics for all tunnels
         for tunnel in &self.tunnels {
             let url = format!("http://localhost:{}/metrics", tunnel.metrics_port);
@@ -164,7 +179,11 @@ impl DashboardApp {
             .split(f.size());
 
         // Header
-        let header = Paragraph::new(" xpose dashboard - Monitoring Hub")
+        let header_text = format!(
+            " xpose dashboard - Monitoring Hub | Global: {} Busy / {} Available",
+            self.global_stats.busy, self.global_stats.available
+        );
+        let header = Paragraph::new(header_text)
             .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Cyan)));
         f.render_widget(header, rects[0]);
 
@@ -227,13 +246,18 @@ impl DashboardApp {
                     .block(Block::default().borders(Borders::ALL).title(" Tunnel Details "));
                 f.render_widget(details, detail_area[0]);
 
-                // Simple "Load" Gauge (example: proximity to a hypothetical 1GB limit)
-                let total_bytes = m.map(|m| m.rx_bytes + m.tx_bytes).unwrap_or(0);
-                let percentage = (total_bytes as f64 / 1_073_741_824.0 * 100.0).min(100.0) as u16;
+                // Infrastructure usage gauge
+                let global_tunnels = self.global_stats.total;
+                let usage_percent = if global_tunnels > 0 {
+                    (self.global_stats.busy as f64 / global_tunnels as f64 * 100.0) as u16
+                } else {
+                    0
+                };
+                
                 let gauge = Gauge::default()
-                    .block(Block::default().borders(Borders::ALL).title(" Usage (vs 1GB Limit) "))
-                    .gauge_style(Style::default().fg(if percentage > 80 { Color::Red } else { Color::Green }))
-                    .percent(percentage);
+                    .block(Block::default().borders(Borders::ALL).title(" Global Infrastructure Usage "))
+                    .gauge_style(Style::default().fg(if usage_percent > 80 { Color::Red } else { Color::Green }))
+                    .percent(usage_percent);
                 f.render_widget(gauge, detail_area[1]);
             }
         }
@@ -272,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_navigation() {
-        let mut app = DashboardApp::new();
+        let mut app = DashboardApp::new("http://localhost".to_string());
         app.tunnels = vec![
             TunnelEntry { pid: 1, port: 3000, protocol: "tcp".to_string(), url: "u1".to_string(), start_time: 0, metrics_port: 0 },
             TunnelEntry { pid: 2, port: 8080, protocol: "tcp".to_string(), url: "u2".to_string(), start_time: 0, metrics_port: 0 },

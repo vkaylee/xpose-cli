@@ -28,6 +28,12 @@ pub struct ServerConfig {
     pub min_cli_version: String,
     pub recommended_version: String,
 }
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct GlobalStats {
+    pub total: u64,
+    pub busy: u64,
+    pub available: u64,
+}
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
@@ -143,6 +149,17 @@ impl ApiClient {
             Ok(())
         } else {
             Err("Failed to release tunnel".to_string())
+        }
+    }
+
+    pub async fn get_global_stats(&self) -> Result<GlobalStats, String> {
+        let url = format!("{}/api/stats", self.base_url);
+        let res = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
+        if res.status().is_success() {
+            let data: GlobalStats = res.json().await.map_err(|e| e.to_string())?;
+            Ok(data)
+        } else {
+            Err("Failed to fetch global stats".to_string())
         }
     }
 
