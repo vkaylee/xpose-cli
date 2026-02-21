@@ -1,7 +1,7 @@
 # Cloudflare Tunnel CLI (xpose)
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-0.1.0-green.svg)
+![Version](https://img.shields.io/badge/version-0.2.0-green.svg)
 
 A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels (`cloudflared`). Written entirely in Rust 🦀, distributed via NPM.
 
