@@ -13,6 +13,12 @@ struct Tunnel {
     last_heartbeat: Option<f64>,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct ServerConfigResponse {
+    pub min_cli_version: String,
+    pub recommended_version: String,
+}
+
 #[derive(Deserialize)]
 struct AddTunnelRequest {
     id: String,
@@ -32,12 +38,22 @@ struct DeviceRequest {
     device_id: String,
 }
 
-const BANNED_KEYWORDS: &[&str] = &[
+pub const MIN_CLI_VERSION: &str = "0.1.0";
+pub const RECOMMENDED_VERSION: &str = "0.1.0";
+
+pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
+
+pub const BANNED_KEYWORDS: &[&str] = &[
     "bank", "login", "facebook", "google", "paypal", "stripe", "admin", "secure",
 ];
-const ALLOWED_PORTS: &[u16] = &[
+pub const ALLOWED_PORTS: &[u16] = &[
     80, 443, 3000, 3001, 5000, 5173, 8000, 8008, 8080, 8443, 9000,
 ];
+
+pub fn is_port_allowed(port: u16) -> bool {
+    ALLOWED_PORTS.contains(&port)
+}
+
 
 fn is_safe_name(name: &str) -> bool {
     let lower = name.to_lowercase();
@@ -95,11 +111,11 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     let router = Router::new();
 
     router
-        .get("/", |_, _| Response::ok("Cloudflare Tunnel CLI Key Server (Rust 🦀) is running."))
+        .get("/", |_, _| Response::ok(RUNNING_MESSAGE))
         .get("/api/config", |_, _| {
             Response::from_json(&serde_json::json!({
-                "min_cli_version": "0.1.0",
-                "recommended_version": "0.1.0"
+                "min_cli_version": MIN_CLI_VERSION,
+                "recommended_version": RECOMMENDED_VERSION
             }))
         })
         .post_async("/admin/tunnels", |mut req, ctx| async move {
@@ -277,5 +293,36 @@ mod tests {
         assert!(!is_safe_name("PAYPAL-checkout"));
         assert!(!is_safe_name("admin-tool"));
         assert!(!is_safe_name("secure-gw"));
+    }
+
+    #[test]
+    fn test_is_port_allowed() {
+        assert!(is_port_allowed(80));
+        assert!(is_port_allowed(3000));
+        assert!(!is_port_allowed(22));
+        assert!(!is_port_allowed(3306));
+    }
+
+    #[test]
+    fn test_serialization() {
+        let tunnel = Tunnel {
+            id: "t1".to_string(),
+            name: "n1".to_string(),
+            token: "tok1".to_string(),
+            status: "AVAILABLE".to_string(),
+            device_id: None,
+            port: None,
+            protocol: None,
+            last_heartbeat: None,
+        };
+        let json = serde_json::to_string(&tunnel).unwrap();
+        assert!(json.contains("\"id\":\"t1\""));
+        assert!(json.contains("\"status\":\"AVAILABLE\""));
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(MIN_CLI_VERSION, "0.1.0");
+        assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 }

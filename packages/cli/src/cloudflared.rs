@@ -159,23 +159,58 @@ impl CloudflaredConfig {
         token: &str,
         metrics_port: u16,
     ) -> Result<std::process::Child, String> {
+        self.create_tunnel_command(token, metrics_port)
+            .spawn()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn create_tunnel_command(&self, token: &str, metrics_port: u16) -> Command {
         let metrics_addr = format!("localhost:{metrics_port}");
-        let child = Command::new(&self.bin_path)
-            .arg("tunnel")
+        let mut cmd = Command::new(&self.bin_path);
+        cmd.arg("tunnel")
             .arg("--metrics")
             .arg(&metrics_addr)
             .arg("run")
             .arg("--token")
             .arg(token)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-
-        Ok(child)
+            .stderr(std::process::Stdio::null());
+        cmd
     }
 }
 
 fn request_is_archive(name: &str) -> bool {
     name.ends_with(".tgz") || name.ends_with(".zip") || name.ends_with(".tar.gz")
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_request_is_archive() {
+        assert!(request_is_archive("file.tgz"));
+        assert!(request_is_archive("file.zip"));
+        assert!(request_is_archive("file.tar.gz"));
+        assert!(!request_is_archive("file.exe"));
+        assert!(!request_is_archive("cloudflared-linux-amd64"));
+    }
+
+    #[test]
+    fn test_create_tunnel_command() {
+        let config = CloudflaredConfig { bin_path: PathBuf::from("/usr/bin/cloudflared") };
+        let cmd = config.create_tunnel_command("test-token", 1234);
+        
+        assert_eq!(cmd.get_program(), "/usr/bin/cloudflared");
+        let args: Vec<_> = cmd.get_args().map(|s| s.to_str().unwrap()).collect();
+        assert_eq!(args, vec!["tunnel", "--metrics", "localhost:1234", "run", "--token", "test-token"]);
+    }
+
+    #[test]
+    fn test_cloudflared_config_new_fallback() {
+        // This test ensures the constructor doesn't crash and returns a path
+        let config = CloudflaredConfig::new();
+        assert!(!config.bin_path.as_os_str().is_empty());
+    }
 }

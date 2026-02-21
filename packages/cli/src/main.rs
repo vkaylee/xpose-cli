@@ -60,7 +60,7 @@ struct Args {
     udp: bool,
 }
 
-fn map_error(e: &str) -> String {
+pub fn map_error(e: &str) -> String {
     if e.contains("timeout") {
         "Request timed out. Please check your internet connection.".to_string()
     } else if e.contains("403") {
@@ -71,6 +71,36 @@ fn map_error(e: &str) -> String {
         "No tunnels available in the pool. Please try again later.".to_string()
     } else {
         format!("An unexpected error occurred: {e}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_error_timeout() {
+        assert_eq!(map_error("connection timeout"), "Request timed out. Please check your internet connection.");
+    }
+
+    #[test]
+    fn test_map_error_403() {
+        assert_eq!(map_error("error 403: forbidden"), "Access denied. This port might be restricted for security reasons.");
+    }
+
+    #[test]
+    fn test_map_error_409() {
+        assert_eq!(map_error("error 409: conflict"), "Tunnel collision. Someone else might be using this tunnel, please retry.");
+    }
+
+    #[test]
+    fn test_map_error_503() {
+        assert_eq!(map_error("error 503: unavailable"), "No tunnels available in the pool. Please try again later.");
+    }
+
+    #[test]
+    fn test_map_error_unexpected() {
+        assert_eq!(map_error("some weird error"), "An unexpected error occurred: some weird error");
     }
 }
 

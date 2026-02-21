@@ -122,20 +122,20 @@ impl Ui {
 
         let sparkline = self.generate_sparkline();
 
-        let total_mb = (rx_bytes + tx_bytes) as f64 / 1_048_576.0;
-        let rx_kbps = rx_speed as f64 / 1024.0;
-        let tx_kbps = tx_speed as f64 / 1024.0;
+        let total_formatted = Self::format_size(rx_bytes + tx_bytes);
+        let rx_formatted = Self::format_size(rx_speed);
+        let tx_formatted = Self::format_size(tx_speed);
 
         let live_line = format!(
-            "{} [{}] | {} {} | {} {} | {} {:.2} MB | {} {}ms",
+            "{} [{}] | {} {}/s | {} {}/s | {} {} | {} {}ms",
             style("Flow:").dim(),
             style(sparkline).cyan(),
             style("↓ Rx:").cyan(),
-            style(format!("{rx_kbps:.1} KB/s")).bold(),
+            style(rx_formatted).bold(),
             style("↑ Tx:").magenta(),
-            style(format!("{tx_kbps:.1} KB/s")).bold(),
+            style(tx_formatted).bold(),
             style("Total:").yellow(),
-            total_mb,
+            total_formatted,
             style("Ping:").dim(),
             style(ping_ms.to_string()).bold()
         );
@@ -145,6 +145,24 @@ impl Ui {
             style("● Live Traffic:").green(),
             live_line
         ));
+    }
+
+    pub fn format_size(bytes: u64) -> String {
+        const KB: f64 = 1024.0;
+        const MB: f64 = KB * 1024.0;
+        const GB: f64 = MB * 1024.0;
+
+        let bytes_f = bytes as f64;
+
+        if bytes_f >= GB {
+            format!("{:.2} GB", bytes_f / GB)
+        } else if bytes_f >= MB {
+            format!("{:.2} MB", bytes_f / MB)
+        } else if bytes_f >= KB {
+            format!("{:.1} KB", bytes_f / KB)
+        } else {
+            format!("{} B", bytes)
+        }
     }
 
     fn generate_sparkline(&self) -> String {
@@ -168,5 +186,47 @@ impl Ui {
         }
 
         line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sparkline_empty() {
+        let ui = Ui::new();
+        assert_eq!(ui.generate_sparkline(), " ".repeat(20));
+    }
+
+    #[test]
+    fn test_sparkline_full() {
+        let mut ui = Ui::new();
+        for i in 0..20 {
+            ui.metrics_history.push(i);
+        }
+        let spark = ui.generate_sparkline();
+        assert_eq!(spark.chars().count(), 20);
+        assert!(spark.contains('█')); // Max value should be full block
+        assert!(spark.starts_with(' ')); // Min value (0) should be space
+    }
+
+    #[test]
+    fn test_metrics_rolling_history() {
+        let mut ui = Ui::new();
+        for i in 0..25 {
+            ui.draw_live_metrics(0, 0, i, 0, 0);
+        }
+        assert_eq!(ui.metrics_history.len(), 20);
+        assert_eq!(ui.metrics_history.last(), Some(&24));
+    }
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(Ui::format_size(500), "500 B");
+        assert_eq!(Ui::format_size(1024), "1.0 KB");
+        assert_eq!(Ui::format_size(1536), "1.5 KB");
+        assert_eq!(Ui::format_size(1_048_576), "1.00 MB");
+        assert_eq!(Ui::format_size(1_073_741_824), "1.00 GB");
     }
 }

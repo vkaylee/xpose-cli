@@ -24,3 +24,6 @@ arboard = "3.4.1"
 log = "0.4.26"
 fern = "0.7.1"
 chrono = { workspace = true }
+
+[dev-dependencies]
+mockito = "1.6.1"
