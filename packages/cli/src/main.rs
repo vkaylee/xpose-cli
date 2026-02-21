@@ -1,5 +1,7 @@
 mod api;
 mod cloudflared;
+mod dashboard;
+mod registry;
 mod ui;
 
 use clap::{
@@ -34,30 +36,23 @@ fn cli_styles() -> Styles {
     name = "xpose",
     about = "Cloudflare Tunnel CLI for developers",
     styles = cli_styles(),
-    after_help = "\
-\x1b[1;32mEXAMPLES:\x1b[0m
-  \x1b[90m# Expose local port 3000 via TCP\x1b[0m
-  \x1b[36m$ xpose 3000\x1b[0m
-
-  \x1b[90m# Expose local port 8080 via UDP\x1b[0m
-  \x1b[36m$ xpose 8080 --udp\x1b[0m
-
-  \x1b[90m# Expose without passing a port (reads from .env MT_TUNNEL_PORT or auto-detects)\x1b[0m
-  \x1b[36m$ xpose\x1b[0m
-
-\x1b[1;32mTYPICAL WORKFLOW:\x1b[0m
-  Run \x1b[36m'xpose <port>'\x1b[0m and you'll get a public URL instantly. 
-  The connection will stay alive as long as this terminal is open.
-"
+    after_help = "\x1b[1;32mEXAMPLES:\x1b[0m\n  \x1b[90m# Expose local port 3000\x1b[0m\n  \x1b[36m$ xpose 3000\x1b[0m\n\n  \x1b[90m# Open interactive dashboard\x1b[0m\n  \x1b[36m$ xpose dashboard\x1b[0m\n"
 )]
 struct Args {
-    #[arg(
-        help = "The local port to forward (optional, defaults to auto-detect or .env MT_TUNNEL_PORT)"
-    )]
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[arg(help = "The local port to forward")]
     port: Option<u16>,
 
     #[arg(long, help = "Use UDP protocol instead of TCP")]
     udp: bool,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Commands {
+    #[command(about = "Open local management dashboard")]
+    Dashboard,
 }
 
 pub fn map_error(e: &str) -> String {
@@ -146,6 +141,16 @@ async fn main() {
     info!("Starting xpose CLI v{}", env!("CARGO_PKG_VERSION"));
 
     let args = Args::parse();
+    let registry = registry::Registry::new();
+
+    if let Some(Commands::Dashboard) = args.command {
+        let mut app = dashboard::DashboardApp::new();
+        if let Err(e) = app.run() {
+            eprintln!("Error running dashboard: {e}");
+        }
+        process::exit(0);
+    }
+
     let ui = Ui::new();
 
     let port = args
@@ -249,7 +254,12 @@ async fn main() {
     };
     pb.finish_with_message("Tunnel allocated.");
 
-    let metrics_port = 55555;
+    let active_tunnels = registry.list_active();
+    let mut metrics_port = 55555;
+    while active_tunnels.iter().any(|t| t.metrics_port == metrics_port) {
+        metrics_port += 1;
+    }
+
     let mut child = match cf_config.start_tunnel(&tunnel_info.token, metrics_port) {
         Ok(c) => c,
         Err(e) => {
@@ -264,6 +274,15 @@ async fn main() {
 
     ui.draw_connected_panel(port, &public_url, protocol);
     ui.info("cloudflared is running in background. Tunnel token hidden for security.");
+
+    let _ = registry.register(registry::TunnelEntry {
+        pid: process::id(),
+        port,
+        protocol: protocol.to_string(),
+        url: public_url.clone(),
+        start_time: registry::get_now_secs(),
+        metrics_port,
+    });
 
     let heartbeat_device = device_id.clone();
     let heartbeat_api = ApiClient::new(KEY_SERVER_URL.to_string());
@@ -357,6 +376,7 @@ async fn main() {
             )
             .await;
             let _ = api_client.release_tunnel(&device_id).await;
+            let _ = registry::Registry::new().unregister(process::id());
             handle.abort();
             process::exit(0);
         }
