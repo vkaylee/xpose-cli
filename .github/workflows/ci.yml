@@ -21,9 +21,11 @@ jobs:
           components: rustfmt, clippy
 
       - name: Build Docker Builder
+        shell: bash
         run: docker build -t xpose-builder .
 
       - name: Lint & Format
+        shell: bash
         run: |
           docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
 
@@ -33,5 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Tests
+        shell: bash
         run: |
           docker run --rm -v $(pwd):/workspace xpose-builder cargo test --workspace
