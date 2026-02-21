@@ -222,11 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_size() {
-        assert_eq!(Ui::format_size(500), "500 B");
+    fn test_format_size_edge_cases() {
+        assert_eq!(Ui::format_size(0), "0 B");
+        assert_eq!(Ui::format_size(1023), "1023 B");
         assert_eq!(Ui::format_size(1024), "1.0 KB");
-        assert_eq!(Ui::format_size(1536), "1.5 KB");
+        assert_eq!(Ui::format_size(1048575), "1024.0 KB"); // Boundary before MB
         assert_eq!(Ui::format_size(1_048_576), "1.00 MB");
         assert_eq!(Ui::format_size(1_073_741_824), "1.00 GB");
+        assert_eq!(Ui::format_size(1_099_511_627_776), "1024.00 GB"); // We stop at GB but handle larger
     }
 }

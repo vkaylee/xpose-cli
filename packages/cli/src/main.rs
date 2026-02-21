@@ -74,9 +74,34 @@ pub fn map_error(e: &str) -> String {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum VersionStatus {
+    UpToDate,
+    UpdateAvailable,
+    Outdated,
+}
+
+fn check_version_compatibility(current: &str, min: &str, recommended: &str) -> VersionStatus {
+    if min > current {
+        VersionStatus::Outdated
+    } else if recommended > current {
+        VersionStatus::UpdateAvailable
+    } else {
+        VersionStatus::UpToDate
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_version_compatibility() {
+        assert_eq!(check_version_compatibility("0.1.0", "0.1.0", "0.1.0"), VersionStatus::UpToDate);
+        assert_eq!(check_version_compatibility("0.1.0", "0.2.0", "0.2.0"), VersionStatus::Outdated);
+        assert_eq!(check_version_compatibility("0.1.0", "0.1.0", "0.2.0"), VersionStatus::UpdateAvailable);
+        assert_eq!(check_version_compatibility("0.2.0", "0.1.0", "0.1.0"), VersionStatus::UpToDate);
+    }
 
     #[test]
     fn test_map_error_timeout() {
@@ -195,14 +220,18 @@ async fn main() {
     // Version Check
     if let Ok(config) = api_client.get_config().await {
         let current_version = env!("CARGO_PKG_VERSION");
-        if config.min_cli_version.as_str() > current_version {
-            ui.error(&format!("Critical: Your CLI version (v{current_version}) is outdated. Minimum required: v{}. Please update.", config.min_cli_version));
-            process::exit(1);
-        } else if config.recommended_version.as_str() > current_version {
-            ui.info(&format!(
-                "Update available: v{} (Current: v{}). Please run 'npm update -g xpose-cli' soon.",
-                config.recommended_version, current_version
-            ));
+        match check_version_compatibility(current_version, &config.min_cli_version, &config.recommended_version) {
+            VersionStatus::Outdated => {
+                ui.error(&format!("Critical: Your CLI version (v{current_version}) is outdated. Minimum required: v{}. Please update.", config.min_cli_version));
+                process::exit(1);
+            }
+            VersionStatus::UpdateAvailable => {
+                ui.info(&format!(
+                    "Update available: v{} (Current: v{}). Please run 'npm update -g xpose-cli' soon.",
+                    config.recommended_version, current_version
+                ));
+            }
+            VersionStatus::UpToDate => {}
         }
     }
 

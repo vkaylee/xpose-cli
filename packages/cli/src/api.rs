@@ -227,4 +227,49 @@ mod tests {
         assert!(res.is_ok());
         mock.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_get_config_server_error() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server.mock("GET", "/api/config")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let res = client.get_config().await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_tunnel_malformed_json() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server.mock("POST", "/api/request")
+            .with_status(200)
+            .with_body("invalid json")
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let res = client.request_tunnel("dev1", None, None).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_tunnel_error_message() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server.mock("POST", "/api/request")
+            .with_status(403)
+            .with_body(r#"{"success": false, "error": "Custom error message"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let res = client.request_tunnel("dev1", None, None).await;
+        assert!(res.is_err());
+        assert_eq!(res.err().unwrap(), "Custom error message");
+    }
 }

@@ -280,19 +280,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_safe_name_allowed() {
-        assert!(is_safe_name("my-awesome-tunnel"));
-        assert!(is_safe_name("dev-backend-api"));
-        assert!(is_safe_name("test-123"));
+    fn test_is_safe_name_edge_cases() {
+        assert!(is_safe_name("")); // Empty name is technically safe from keywords
+        assert!(is_safe_name("   ")); // Spaces are safe
+        assert!(!is_safe_name("ADMIN")); // Case insensitive
+        assert!(!is_safe_name("  bank  ")); // Leading/trailing spaces
+        assert!(!is_safe_name("mybankapp")); // Substring
     }
 
     #[test]
-    fn test_is_safe_name_banned() {
-        assert!(!is_safe_name("m-bank-login"));
-        assert!(!is_safe_name("facebook-portal"));
-        assert!(!is_safe_name("PAYPAL-checkout"));
-        assert!(!is_safe_name("admin-tool"));
-        assert!(!is_safe_name("secure-gw"));
+    fn test_is_port_allowed_edge_cases() {
+        assert!(!is_port_allowed(0));
+        assert!(!is_port_allowed(65535));
+        for &port in ALLOWED_PORTS {
+            assert!(is_port_allowed(port));
+        }
     }
 
     #[test]
