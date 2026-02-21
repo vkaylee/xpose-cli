@@ -289,4 +289,24 @@ mod tests {
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), "Custom error message");
     }
+
+    #[tokio::test]
+    async fn test_get_global_stats_success() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server.mock("GET", "/api/stats")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"total": 10, "busy": 3, "available": 7}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let stats = client.get_global_stats().await.unwrap();
+
+        assert_eq!(stats.total, 10);
+        assert_eq!(stats.busy, 3);
+        assert_eq!(stats.available, 7);
+        mock.assert_async().await;
+    }
 }

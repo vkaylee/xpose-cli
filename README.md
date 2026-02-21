@@ -24,6 +24,9 @@ A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels 
   - Built-in IP Rate Limiting.
   - Automatic Phishing prevention (blocks sensitive subdomains like `login`, `bank`).
   - Restricts exposure to safe development ports only.
+- **Interactive Monitoring Hub**:
+  - `xpose dashboard`: A full-screen TUI to manage multiple tunnels simultaneously.
+  - **Global Insights**: Monitor total infrastructure health, active sessions vs available pool, and account-wide usage gauges.
 
 ---
 
@@ -52,6 +55,9 @@ xpose 8080 --udp
 
 # Auto-detect (scans 3000, 8000, 8080 or reads MT_TUNNEL_PORT from .env)
 xpose
+
+# Open the Interactive Management Dashboard
+xpose dashboard
 ```
 
 ---
