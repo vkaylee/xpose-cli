@@ -111,8 +111,9 @@ impl Ui {
         }
 
         let _ = self.term.write_line(&format!(
-            "\n  {} Press Ctrl+C to disconnect\n",
-            style("💡 Hint:").yellow().italic()
+            "\n  {} {}\n",
+            style("💡 Hint:").yellow().italic(),
+            style(i18n.t("cli_help")).bright().black()
         ));
     }
 
@@ -123,6 +124,7 @@ impl Ui {
         rx_speed: u64,
         tx_speed: u64,
         ping_ms: u64,
+        ram_bytes: u64,
     ) {
         let _ = self.term.clear_line();
 
@@ -137,9 +139,10 @@ impl Ui {
         let total_formatted = Self::format_size(rx_bytes + tx_bytes);
         let rx_formatted = Self::format_size(rx_speed);
         let tx_formatted = Self::format_size(tx_speed);
+        let ram_formatted = Self::format_size(ram_bytes);
 
         let live_line = format!(
-            "{} [{}] | {} {}/s | {} {}/s | {} {} | {} {}ms",
+            "{} [{}] | {} {}/s | {} {}/s | {} {} | {} {}ms | {} {}",
             style("Flow:").dim(),
             style(sparkline).cyan(),
             style("↓ Rx:").cyan(),
@@ -149,7 +152,9 @@ impl Ui {
             style("Total:").yellow(),
             total_formatted,
             style("Ping:").dim(),
-            style(ping_ms.to_string()).bold()
+            style(ping_ms.to_string()).bold(),
+            style("RAM:").dim(),
+            style(ram_formatted).bold()
         );
 
         let _ = self.term.write_str(&format!(
@@ -198,5 +203,18 @@ impl Ui {
         }
 
         line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(Ui::format_size(500), "500 B");
+        assert_eq!(Ui::format_size(1024), "1.0 KB");
+        assert_eq!(Ui::format_size(1024 * 1024), "1.00 MB");
+        assert_eq!(Ui::format_size(1024 * 1024 * 1024), "1.00 GB");
     }
 }

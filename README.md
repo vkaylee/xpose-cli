@@ -26,9 +26,11 @@ A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels 
   - Restricts exposure to safe development ports only.
 - **Interactive Monitoring Hub**:
   - `xpose dashboard`: A full-screen TUI to manage multiple tunnels simultaneously.
-### Global Infrastructure Insights
-- **Header Stats**: Live busy/available tunnel counts from the Key Server.
-- **Usage Gauge**: Visual indicator of global infrastructure utilization.
+- **Interactive Control**: Manage tunnels with single-key shortcuts.
+  - `X`: Stop the selected tunnel (sends SIGTERM).
+  - `R`: Restart the selected tunnel.
+  - `Q` or `Esc`: Quit dashboard.
+  - `↑/↓`: Navigate sessions.
 
 ### Multi-language Support
 xpose support English (default), Vietnamese, and Chinese.

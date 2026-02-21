@@ -355,6 +355,8 @@ async fn main() {
         let mut last_rx: u64 = 0;
         let mut last_tx: u64 = 0;
         let mut tick_count = 0;
+        let mut sys = sysinfo::System::new();
+        let pid = sysinfo::Pid::from(process::id() as usize);
 
         loop {
             sleep(Duration::from_secs(1)).await;
@@ -363,6 +365,14 @@ async fn main() {
                 let _ = heartbeat_api.send_heartbeat(&heartbeat_device).await;
                 tick_count = 0;
             }
+
+            // Fetch RAM usage
+            sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                false,
+                sysinfo::ProcessRefreshKind::nothing().with_memory(),
+            );
+            let ram_bytes = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
 
             let start = tokio::time::Instant::now();
             if let Ok(res) = metrics_client.get(&metrics_url).send().await {
@@ -389,7 +399,9 @@ async fn main() {
                     last_tx = tx_bytes;
 
                     if let Ok(mut ui) = ui_clone.lock() {
-                        ui.draw_live_metrics(rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms);
+                        ui.draw_live_metrics(
+                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes,
+                        );
                     }
                 }
             }
@@ -411,25 +423,46 @@ async fn main() {
         }
     });
 
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            println!("\nShutting down tunnel...");
-            let _ = child.kill();
-            send_telemetry(
-                &telemetry_api,
-                "stop",
-                &telemetry_device,
-                serde_json::json!({}),
-            )
-            .await;
-            let _ = api_client.release_tunnel(&device_id).await;
-            let _ = registry::Registry::new().unregister(process::id());
-            handle.abort();
-            process::exit(0);
-        }
-        Err(err) => {
-            eprintln!("Unable to listen for shutdown signal: {err}");
-            process::exit(1);
+    let mut sigint = Box::pin(signal::ctrl_c());
+
+    loop {
+        tokio::select! {
+            _ = &mut sigint => {
+                println!("\nShutting down tunnel...");
+                let _ = child.kill();
+                send_telemetry(&telemetry_api, "stop", &telemetry_device, serde_json::json!({})).await;
+                let _ = api_client.release_tunnel(&device_id).await;
+                let _ = registry::Registry::new().unregister(process::id());
+                handle.abort();
+                process::exit(0);
+            }
+            res = tokio::task::spawn_blocking(|| crossterm::event::poll(Duration::from_millis(100))) => {
+                if let Ok(Ok(true)) = res {
+                    if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+                        match key.code {
+                            crossterm::event::KeyCode::Char('x') => {
+                                println!("\nStopping tunnel as requested...");
+                                let _ = child.kill();
+                                send_telemetry(&telemetry_api, "stop", &telemetry_device, serde_json::json!({})).await;
+                                let _ = api_client.release_tunnel(&device_id).await;
+                                let _ = registry::Registry::new().unregister(process::id());
+                                handle.abort();
+                                process::exit(0);
+                            }
+                            crossterm::event::KeyCode::Char('r') => {
+                                println!("\nRestarting tunnel...");
+                                let _ = child.kill();
+                                let _ = api_client.release_tunnel(&device_id).await;
+                                let _ = registry::Registry::new().unregister(process::id());
+                                handle.abort();
+                                ui_ref.lock().unwrap().info("Tunnel stopped. Re-run command to restart.");
+                                process::exit(0);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
     }
 }

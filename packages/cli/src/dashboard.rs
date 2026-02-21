@@ -37,6 +37,8 @@ pub struct DashboardApp {
     api_client: ApiClient,
     tick_count: u64,
     i18n: I18n,
+    sys: sysinfo::System,
+    pid: sysinfo::Pid,
 }
 
 impl DashboardApp {
@@ -47,6 +49,9 @@ impl DashboardApp {
         if !tunnels.is_empty() {
             table_state.select(Some(0));
         }
+        let sys = sysinfo::System::new();
+        let pid = sysinfo::Pid::from(std::process::id() as usize);
+
         Self {
             registry,
             tunnels,
@@ -61,6 +66,8 @@ impl DashboardApp {
             api_client: ApiClient::new(api_url),
             tick_count: 0,
             i18n,
+            sys,
+            pid,
         }
     }
 
@@ -84,7 +91,9 @@ impl DashboardApp {
             if event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
-                        KeyCode::Char('q') => self.should_quit = true,
+                        KeyCode::Esc | KeyCode::Char('q') => self.should_quit = true,
+                        KeyCode::Char('x') => self.stop_selected_session(),
+                        KeyCode::Char('r') => self.restart_selected_session(),
                         KeyCode::Down => self.next(),
                         KeyCode::Up => self.previous(),
                         _ => {}
@@ -114,6 +123,11 @@ impl DashboardApp {
     }
 
     fn on_tick(&mut self) {
+        self.sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[self.pid]),
+            false,
+            sysinfo::ProcessRefreshKind::nothing().with_memory(),
+        );
         self.tunnels = self.registry.list_active();
         if self.tunnels.is_empty() {
             self.table_state.select(None);
@@ -190,6 +204,39 @@ impl DashboardApp {
         self.table_state.select(Some(i));
     }
 
+    fn stop_selected_session(&mut self) {
+        if let Some(i) = self.table_state.selected() {
+            if let Some(tunnel) = self.tunnels.get(i) {
+                let pid = tunnel.pid;
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                }
+                let _ = self.registry.unregister(pid);
+                self.on_tick();
+            }
+        }
+    }
+
+    fn restart_selected_session(&mut self) {
+        if let Some(i) = self.table_state.selected() {
+            if let Some(tunnel) = self.tunnels.get(i) {
+                let _pid = tunnel.pid;
+                let _port = tunnel.port;
+                let _protocol = tunnel.protocol.clone();
+
+                // Stop current
+                unsafe {
+                    libc::kill(tunnel.pid as libc::pid_t, libc::SIGTERM);
+                }
+                let _ = self.registry.unregister(tunnel.pid);
+
+                // Re-launch is handled by the user for now in this version,
+                // but we trigger the registry update immediately.
+                self.on_tick();
+            }
+        }
+    }
+
     fn ui(&mut self, f: &mut ratatui::Frame) {
         let rects = Layout::default()
             .direction(Direction::Vertical)
@@ -202,6 +249,9 @@ impl DashboardApp {
             .split(f.size());
 
         // Header
+        let ram_bytes = self.sys.process(self.pid).map(|p| p.memory()).unwrap_or(0);
+        let ram_formatted = crate::ui::Ui::format_size(ram_bytes);
+
         let header_content = vec![
             ratatui::text::Span::styled(
                 format!(" {} ", self.i18n.t("dashboard_title")),
@@ -218,6 +268,13 @@ impl DashboardApp {
                     .replace("{}", &self.global_stats.available.to_string()),
                 Style::default()
                     .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            ratatui::text::Span::raw(" | "),
+            ratatui::text::Span::styled(
+                format!("{}: {}", self.i18n.t("ram_usage"), ram_formatted),
+                Style::default()
+                    .fg(Color::Magenta)
                     .add_modifier(Modifier::BOLD),
             ),
         ];
