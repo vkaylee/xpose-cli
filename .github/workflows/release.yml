@@ -34,6 +34,7 @@ jobs:
           workspaces: packages/cli -> target
 
       - name: Build
+        shell: bash
         run: |
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
             # Build using our local Dockerfile for Linux
@@ -50,6 +51,7 @@ jobs:
           BIN_NAME="xpose"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             BIN_NAME="xpose.exe"
+            # Windows needs to find the bin in the package-specific target directory or root
             tar -czvf "xpose-${{ matrix.target }}.tar.gz" -C packages/cli/target/${{ matrix.target }}/release "$BIN_NAME"
           else
             tar -czvf "xpose-${{ matrix.target }}.tar.gz" -C packages/cli/target/${{ matrix.target }}/release "$BIN_NAME"
