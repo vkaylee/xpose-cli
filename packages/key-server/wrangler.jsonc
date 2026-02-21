@@ -13,7 +13,7 @@
 		{
 			"binding": "DB",
 			"database_name": "tunnel-db",
-			"database_id": "00000000-0000-0000-0000-000000000000", // TODO: Replace with your actual D1 database ID from `wrangler d1 create`
+			"database_id": "__CLOUDFLARE_D1_ID__", // Injected in CI via sed from GitHub Secret
 			"migrations_dir": "./migrations"
 		}
 	],

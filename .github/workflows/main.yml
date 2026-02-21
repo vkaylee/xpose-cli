@@ -149,7 +149,12 @@ jobs:
           load: true
           cache-from: type=gha,scope=xpose-builder
       - name: Deploy to Cloudflare Workers
+        env:
+          CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
         run: |
+          # Inject dynamic D1 Database ID
+          sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
+          
           docker run --rm -v $(pwd):/workspace \
             -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} \
             xpose-builder bash -c "cd packages/key-server && wrangler deploy"
