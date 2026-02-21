@@ -1,0 +1,17 @@
+# AI Instructions
+
+CRITICAL RULE: This project STRICTLY uses Docker for all development, testing, compiling, and building.
+
+DO NOT run `cargo`, `npm`, `node`, `wrangler`, or any other build/test tools directly on the host machine.
+ALL commands must be executed inside the Docker container. 
+
+You must first ensure the container is running globally:
+`docker-compose up -d`
+
+Then, execute commands inside the container using `docker-compose exec dev <command>`, or enter the shell using `docker-compose exec dev bash`.
+
+For example, to build the CLI:
+`docker-compose exec dev bash -c "cd packages/cli && cargo build --release"`
+
+To run tests:
+`docker-compose exec dev bash -c "cd packages/key-server && cargo test"`
