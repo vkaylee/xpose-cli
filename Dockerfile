@@ -40,10 +40,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && npm install -g wrangler@3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Setup Rust components and sccache in one step
+# Setup Rust components, sccache, and worker-build in one step
 RUN rustup target add x86_64-unknown-linux-musl && \
+    rustup target add wasm32-unknown-unknown && \
     rustup component add rustfmt clippy && \
-    cargo install sccache --version ^0.8
+    cargo install sccache --version ^0.8 && \
+    cargo install worker-build
 
 # Configure sccache
 ENV RUSTC_WRAPPER=sccache
