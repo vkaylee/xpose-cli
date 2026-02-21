@@ -10,31 +10,69 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: Lint & Format
+  build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
-      - name: Build Docker Builder
-        shell: bash
-        run: docker build -t xpose-builder .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and export image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: xpose-builder:latest
+          outputs: type=docker,dest=/tmp/xpose-builder.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpose-builder
+          path: /tmp/xpose-builder.tar
+          retention-days: 1
+
+  lint:
+    name: Lint & Format
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xpose-builder
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/xpose-builder.tar
 
       - name: Lint & Format
         shell: bash
         run: |
-          docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+          docker run --rm -v $(pwd):/workspace xpose-builder:latest bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
 
   test:
     name: Run Tests
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xpose-builder
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/xpose-builder.tar
+
       - name: Run Tests
         shell: bash
         run: |
-          docker run --rm -v $(pwd):/workspace xpose-builder cargo test --workspace
+          docker run --rm -v $(pwd):/workspace xpose-builder:latest cargo test --workspace
