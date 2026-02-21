@@ -61,9 +61,21 @@ jobs:
           name: ${{ matrix.target }}
           path: xpose-${{ matrix.target }}.tar.gz
 
+  deploy-key-server:
+    name: Deploy Key Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: packages/key-server
+          command: deploy --release
+
   release:
     name: Publish Release
-    needs: build
+    needs: [build, deploy-key-server]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
