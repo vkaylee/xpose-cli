@@ -1,5 +1,5 @@
 use arboard::Clipboard;
-use console::{Term, style};
+use console::{style, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use qrcode::QrCode;
 use std::time::Duration;
@@ -52,15 +52,15 @@ impl Ui {
 
         // Try to copy to clipboard
         let mut clipboard_msg = "(Auto-copy failed)";
-        if let Ok(mut clipboard) = Clipboard::new()
-            && clipboard.set_text(public_url.to_string()).is_ok()
-        {
-            clipboard_msg = "(Copied to clipboard)";
+        if let Ok(mut clipboard) = Clipboard::new() {
+            if clipboard.set_text(public_url.to_string()).is_ok() {
+                clipboard_msg = "(Copied to clipboard)";
+            }
         }
 
         let border = style("=====================================================").cyan();
 
-        let _ = self.term.write_line(&format!("{}", border));
+        let _ = self.term.write_line(&format!("{border}"));
         let _ = self.term.write_line(&format!(
             "  {} : {}",
             style("Tunnel").bold(),
@@ -69,7 +69,7 @@ impl Ui {
         let _ = self.term.write_line(&format!(
             "  {} : {}",
             style("Local").bold(),
-            style(format!("localhost:{}", local_port)).yellow()
+            style(format!("localhost:{local_port}")).yellow()
         ));
         let _ = self.term.write_line(&format!(
             "  {} : {} {}",
@@ -82,7 +82,7 @@ impl Ui {
             style("Protocol").bold(),
             protocol.to_uppercase()
         ));
-        let _ = self.term.write_line(&format!("{}", border));
+        let _ = self.term.write_line(&format!("{border}"));
 
         // Generate and draw QR Code using simple string renderer
         if let Ok(code) = QrCode::new(public_url) {
@@ -94,7 +94,7 @@ impl Ui {
                 .build();
             let _ = self.term.write_line("  QR Code for Public URL:");
             for line in string.lines() {
-                let _ = self.term.write_line(&format!("  {}", line));
+                let _ = self.term.write_line(&format!("  {line}"));
             }
         }
 
@@ -131,9 +131,9 @@ impl Ui {
             style("Flow:").dim(),
             style(sparkline).cyan(),
             style("↓ Rx:").cyan(),
-            style(format!("{:.1} KB/s", rx_kbps)).bold(),
+            style(format!("{rx_kbps:.1} KB/s")).bold(),
             style("↑ Tx:").magenta(),
-            style(format!("{:.1} KB/s", tx_kbps)).bold(),
+            style(format!("{tx_kbps:.1} KB/s")).bold(),
             style("Total:").yellow(),
             total_mb,
             style("Ping:").dim(),

@@ -126,7 +126,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             match result {
                 Ok(_) => Response::from_json(&serde_json::json!({"success": true, "message": "Tunnel added"})),
-                Err(e) => Response::error(format!("Database error: {}", e), 500),
+                Err(e) => Response::error(format!("Database error: {e}"), 500),
             }
         })
         .post_async("/api/request", |mut req, ctx| async move {
@@ -142,7 +142,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             // Port restriction
             if let Some(p) = body.port {
                 if !ALLOWED_PORTS.contains(&p) {
-                    return Response::error(format!("Port {} is restricted for security reasons.", p), 403);
+                    return Response::error(format!("Port {p} is restricted for security reasons."), 403);
                 }
             }
 

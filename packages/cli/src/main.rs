@@ -3,19 +3,19 @@ mod cloudflared;
 mod ui;
 
 use clap::{
-    Parser,
     builder::styling::{AnsiColor, Effects, Styles},
+    Parser,
 };
 use dotenvy::dotenv;
 use std::env;
 use std::process;
 use tokio::signal;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 use api::ApiClient;
 use cloudflared::CloudflaredConfig;
 use fern::Dispatch;
-use log::{LevelFilter, info};
+use log::{info, LevelFilter};
 use std::sync::{Arc, Mutex};
 use ui::Ui;
 
@@ -70,7 +70,7 @@ fn map_error(e: &str) -> String {
     } else if e.contains("503") {
         "No tunnels available in the pool. Please try again later.".to_string()
     } else {
-        format!("An unexpected error occurred: {}", e)
+        format!("An unexpected error occurred: {e}")
     }
 }
 
@@ -104,7 +104,7 @@ async fn main() {
             let mut found_port = None;
             for &p in &[3000, 8000, 8080] {
                 if std::net::TcpStream::connect_timeout(
-                    &format!("127.0.0.1:{}", p).parse().unwrap(),
+                    &format!("127.0.0.1:{p}").parse().unwrap(),
                     Duration::from_millis(150),
                 )
                 .is_ok()
@@ -116,7 +116,7 @@ async fn main() {
 
             match found_port {
                 Some(p) => {
-                    ui.success(&format!("Found active service on port {}", p));
+                    ui.success(&format!("Found active service on port {p}"));
                     p
                 }
                 None => {
@@ -166,7 +166,7 @@ async fn main() {
     if let Ok(config) = api_client.get_config().await {
         let current_version = env!("CARGO_PKG_VERSION");
         if config.min_cli_version.as_str() > current_version {
-            ui.error(&format!("Critical: Your CLI version (v{}) is outdated. Minimum required: v{}. Please update.", current_version, config.min_cli_version));
+            ui.error(&format!("Critical: Your CLI version (v{current_version}) is outdated. Minimum required: v{}. Please update.", config.min_cli_version));
             process::exit(1);
         } else if config.recommended_version.as_str() > current_version {
             ui.info(&format!(
@@ -194,7 +194,7 @@ async fn main() {
     let mut child = match cf_config.start_tunnel(&tunnel_info.token, metrics_port) {
         Ok(c) => c,
         Err(e) => {
-            ui.error(&format!("Failed to start cloudflared: {}", e));
+            ui.error(&format!("Failed to start cloudflared: {e}"));
             let _ = api_client.release_tunnel(&device_id).await;
             process::exit(1);
         }
@@ -208,7 +208,7 @@ async fn main() {
 
     let heartbeat_device = device_id.clone();
     let heartbeat_api = ApiClient::new(KEY_SERVER_URL.to_string());
-    let metrics_url = format!("http://localhost:{}/metrics", metrics_port);
+    let metrics_url = format!("http://localhost:{metrics_port}/metrics");
     let metrics_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -220,7 +220,7 @@ async fn main() {
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();
-    let health_url = format!("http://localhost:{}", port);
+    let health_url = format!("http://localhost:{port}");
     let ui_health_clone = ui_ref.clone();
 
     let telemetry_api = ApiClient::new(KEY_SERVER_URL.to_string());
@@ -251,10 +251,10 @@ async fn main() {
                             if let Some(val) = line.split_whitespace().last() {
                                 rx_bytes = val.parse().unwrap_or(last_rx);
                             }
-                        } else if line.starts_with("cloudflared_tunnel_tx_bytes")
-                            && let Some(val) = line.split_whitespace().last()
-                        {
-                            tx_bytes = val.parse().unwrap_or(last_tx);
+                        } else if line.starts_with("cloudflared_tunnel_tx_bytes") {
+                            if let Some(val) = line.split_whitespace().last() {
+                                tx_bytes = val.parse().unwrap_or(last_tx);
+                            }
                         }
                     }
 
@@ -270,16 +270,18 @@ async fn main() {
             }
 
             // Health check every 5 seconds
-            if tick_count % 5 == 0
-                && let Ok(res) = health_client.get(&health_url).send().await
-                && res.status().is_server_error()
-                && let Ok(ui) = ui_health_clone.lock()
-            {
-                ui.error(&format!(
-                    "Warning: Local service on port {} returned status {}",
-                    port,
-                    res.status()
-                ));
+            if tick_count % 5 == 0 {
+                if let Ok(res) = health_client.get(&health_url).send().await {
+                    if res.status().is_server_error() {
+                        if let Ok(ui) = ui_health_clone.lock() {
+                            ui.error(&format!(
+                                "Warning: Local service on port {} returned status {}",
+                                port,
+                                res.status()
+                            ));
+                        }
+                    }
+                }
             }
         }
     });
@@ -300,7 +302,7 @@ async fn main() {
             process::exit(0);
         }
         Err(err) => {
-            eprintln!("Unable to listen for shutdown signal: {}", err);
+            eprintln!("Unable to listen for shutdown signal: {err}");
             process::exit(1);
         }
     }

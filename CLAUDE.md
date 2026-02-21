@@ -1,4 +1,4 @@
-# 💻 Adapter: .cursorrules (L1)
+# 🤖 Adapter: CLAUDE.md (L1)
 
 > [!IMPORTANT]
 > **[PRIME DIRECTIVE]**: You are operating under the AI Context OS. Your VERY FIRST action in a new session MUST be to silently **READ** the file `.ai-context-os/.ultp_state` to synchronize environment state. DO NOT execute shell commands for boot.
@@ -6,9 +6,9 @@
 > **Law:** Read and adhere to the entire AI Operating System at: `.ai-context-os/PROJECT_OS.md`.
 > **Localization:** Reply to the user in their initial prompt language (e.g., Vietnamese).
 
-## Cursor-Specific Capabilities
-- **File Referencing:** Use `@` mentions when reading or modifying files to ensure maximum context accuracy.
-- **Code Generation:** Do not explain obvious things. Output only the necessary code changes.
-- **Indexing:** Rely on Cursor's fast codebase indexing. Do not blindly `grep` or `find` if you can use semantic search.
+## Claude-Specific Capabilities
+- **Artifacts:** Use Claude Artifacts (markdown, html, react) to present complex code changes or diagrams when modifying over 50 lines.
+- **Thinking:** You are encouraged to provide a brief architectural thought process before writing code.
+- **Terminal:** If the user allows tool usage, logically group bash commands minimizing intermediate steps.
 
-Default AI adapter reference: `.ai-context-os/.cursorrules`
+Default AI adapter reference: `.ai-context-os/CLAUDE.md`

@@ -65,18 +65,14 @@ impl CloudflaredConfig {
             ("macos", "x86_64") => "cloudflared-darwin-amd64.tgz",
             ("macos", "aarch64") => "cloudflared-darwin-arm64.tgz",
             ("windows", "x86_64") => "cloudflared-windows-amd64.exe",
-            _ => return Err(format!("Unsupported OS or architecture: {} {}", os, arch)),
+            _ => return Err(format!("Unsupported OS or architecture: {os} {arch}")),
         };
 
         let url = format!(
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/{}",
-            release_name
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/{release_name}",
         );
 
-        info!(
-            "Downloading cloudflared binary for {} {} from {}",
-            os, arch, url
-        );
+        info!("Downloading cloudflared binary for {os} {arch} from {url}");
 
         let client = Client::new();
         let mut response = client.get(&url).send().await.map_err(|e| e.to_string())?;
@@ -144,12 +140,13 @@ impl CloudflaredConfig {
         // Download License for compliance
         let license_url = "https://raw.githubusercontent.com/cloudflare/cloudflared/master/LICENSE";
         let license_path = self.bin_path.parent().unwrap().join("LICENSE.cloudflared");
-        if !license_path.exists()
-            && let Ok(mut res) = client.get(license_url).send().await
-            && let Ok(mut file) = fs::File::create(&license_path)
-        {
-            while let Some(chunk) = res.chunk().await.ok().flatten() {
-                let _ = file.write_all(&chunk);
+        if !license_path.exists() {
+            if let Ok(mut res) = client.get(license_url).send().await {
+                if let Ok(mut file) = fs::File::create(&license_path) {
+                    while let Some(chunk) = res.chunk().await.ok().flatten() {
+                        let _ = file.write_all(&chunk);
+                    }
+                }
             }
         }
 
@@ -162,7 +159,7 @@ impl CloudflaredConfig {
         token: &str,
         metrics_port: u16,
     ) -> Result<std::process::Child, String> {
-        let metrics_addr = format!("localhost:{}", metrics_port);
+        let metrics_addr = format!("localhost:{metrics_port}");
         let child = Command::new(&self.bin_path)
             .arg("tunnel")
             .arg("--metrics")
