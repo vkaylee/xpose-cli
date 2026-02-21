@@ -1,6 +1,6 @@
+use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use log::{info, error};
 use std::time::Duration;
 
 #[derive(Serialize)]
@@ -56,17 +56,15 @@ impl ApiClient {
 
     pub async fn get_config(&self) -> Result<ServerConfig, String> {
         let url = format!("{}/api/config", self.base_url);
-        let res = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                error!("Config fetch failed: {}", e);
-                e.to_string()
-            })?;
+        let res = self.client.get(&url).send().await.map_err(|e| {
+            error!("Config fetch failed: {}", e);
+            e.to_string()
+        })?;
         let data: ServerConfig = res.json().await.map_err(|e| e.to_string())?;
-        info!("Fetched server config: min_cli_version={}", data.min_cli_version);
+        info!(
+            "Fetched server config: min_cli_version={}",
+            data.min_cli_version
+        );
         Ok(data)
     }
 

@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "packages/cli",
+    "packages/key-server",
+]
+resolver = "2"

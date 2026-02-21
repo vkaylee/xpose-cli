@@ -14,9 +14,9 @@ use tokio::time::{Duration, sleep};
 
 use api::ApiClient;
 use cloudflared::CloudflaredConfig;
-use std::sync::{Arc, Mutex};
-use log::{info, error, LevelFilter};
 use fern::Dispatch;
+use log::{LevelFilter, info};
+use std::sync::{Arc, Mutex};
 use ui::Ui;
 
 const KEY_SERVER_URL: &str = "http://127.0.0.1:8787";
@@ -307,7 +307,9 @@ async fn main() {
 }
 
 fn setup_logging() -> Result<(), fern::InitError> {
-    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).unwrap_or_else(|_| ".".to_string());
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
     let log_dir = std::path::Path::new(&home).join(".xpose").join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let log_file = log_dir.join("xpose.log");

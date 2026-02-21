@@ -41,4 +41,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Core Tests
-        run: cargo test --all-workspace
+        run: cargo test --workspace

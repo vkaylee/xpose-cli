@@ -1,5 +1,5 @@
+use log::info;
 use reqwest::Client;
-use log::{info, error, warn};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -68,7 +68,15 @@ impl CloudflaredConfig {
             _ => return Err(format!("Unsupported OS or architecture: {} {}", os, arch)),
         };
 
-        info!("Downloading cloudflared binary for {} {} from {}", os, arch, url);
+        let url = format!(
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/{}",
+            release_name
+        );
+
+        info!(
+            "Downloading cloudflared binary for {} {} from {}",
+            os, arch, url
+        );
 
         let client = Client::new();
         let mut response = client.get(&url).send().await.map_err(|e| e.to_string())?;

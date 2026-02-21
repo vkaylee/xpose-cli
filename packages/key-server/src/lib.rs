@@ -147,7 +147,6 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             }
 
             let db = ctx.env.d1("DB")?;
-            let now = (Date::now().as_millis() / 1000) / 1000; // Correct seconds calculation for D1? Actually Date::now().as_millis() / 1000 is enough.
             let now = (Date::now().as_millis() / 1000) as f64;
 
             // 1. Check if device already has a busy tunnel
