@@ -1,13 +1,13 @@
 # Optimized Multi-stage Dockerfile for Cloudflare Tunnel CLI (Rust🦀)
 
 # --- Stage 1: Planner ---
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-slim-bookworm AS planner
+FROM lukemathwalker/cargo-chef:latest-rust-1.88.0-slim-bookworm AS planner
 WORKDIR /workspace
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # --- Stage 2: Cacher ---
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-slim-bookworm AS cacher
+FROM lukemathwalker/cargo-chef:latest-rust-1.88.0-slim-bookworm AS cacher
 WORKDIR /workspace
 COPY --from=planner /workspace/recipe.json recipe.json
 
@@ -24,7 +24,7 @@ RUN rustup target add x86_64-unknown-linux-musl && \
     cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # --- Stage 3: Developer Environment ---
-FROM rust:1.85-slim-bookworm AS dev
+FROM rust:1.88.0-slim-bookworm AS dev
 WORKDIR /workspace
 
 # Combine system dependencies and Node.js installation into a single optimized layer
