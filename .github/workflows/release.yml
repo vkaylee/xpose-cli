@@ -75,7 +75,7 @@ jobs:
         run: |
           docker run --rm -v $(pwd):/workspace \
             -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} \
-            xpose-builder bash -c "cd packages/key-server && wrangler deploy --release"
+            xpose-builder bash -c "cd packages/key-server && wrangler deploy"
 
   release:
     name: Publish Release
