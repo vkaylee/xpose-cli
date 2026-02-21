@@ -66,7 +66,9 @@ impl Registry {
 }
 
 fn is_process_running(pid: u32) -> bool {
-    if pid == 0 { return false; }
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
         let path = format!("/proc/{}", pid);
@@ -75,12 +77,15 @@ fn is_process_running(pid: u32) -> bool {
     #[cfg(not(unix))]
     {
         // Simple fallback for other OS if needed, or use a crate like `sysinfo`
-        true 
+        true
     }
 }
 
 pub fn get_now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 #[cfg(test)]
@@ -141,13 +146,13 @@ mod tests {
 
         registry.register(active_entry).unwrap();
         registry.register(zombie_entry).unwrap();
-        
+
         assert_eq!(registry.list_all().len(), 2);
-        
+
         let active = registry.list_active();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].url, "http://active");
-        
+
         // Final check: registry should have cleaned itself up
         assert_eq!(registry.list_all().len(), 1);
     }
@@ -157,7 +162,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tunnels.json");
         fs::write(&path, "invalid json {[[[").unwrap();
-        
+
         let registry = Registry { path };
         let entries = registry.list_all();
         assert_eq!(entries.len(), 0); // Should fallback to empty list

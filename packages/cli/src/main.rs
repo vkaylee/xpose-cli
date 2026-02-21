@@ -1,6 +1,7 @@
 mod api;
 mod cloudflared;
 mod dashboard;
+mod i18n;
 mod registry;
 mod ui;
 
@@ -47,6 +48,9 @@ struct Args {
 
     #[arg(long, help = "Use UDP protocol instead of TCP")]
     udp: bool,
+
+    #[arg(long, help = "Override language (en, vi, zh)")]
+    lang: Option<String>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -92,35 +96,62 @@ mod tests {
 
     #[test]
     fn test_version_compatibility() {
-        assert_eq!(check_version_compatibility("0.1.0", "0.1.0", "0.1.0"), VersionStatus::UpToDate);
-        assert_eq!(check_version_compatibility("0.1.0", "0.2.0", "0.2.0"), VersionStatus::Outdated);
-        assert_eq!(check_version_compatibility("0.1.0", "0.1.0", "0.2.0"), VersionStatus::UpdateAvailable);
-        assert_eq!(check_version_compatibility("0.2.0", "0.1.0", "0.1.0"), VersionStatus::UpToDate);
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.1.0", "0.1.0"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.2.0", "0.2.0"),
+            VersionStatus::Outdated
+        );
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.1.0", "0.2.0"),
+            VersionStatus::UpdateAvailable
+        );
+        assert_eq!(
+            check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
+            VersionStatus::UpToDate
+        );
     }
 
     #[test]
     fn test_map_error_timeout() {
-        assert_eq!(map_error("connection timeout"), "Request timed out. Please check your internet connection.");
+        assert_eq!(
+            map_error("connection timeout"),
+            "Request timed out. Please check your internet connection."
+        );
     }
 
     #[test]
     fn test_map_error_403() {
-        assert_eq!(map_error("error 403: forbidden"), "Access denied. This port might be restricted for security reasons.");
+        assert_eq!(
+            map_error("error 403: forbidden"),
+            "Access denied. This port might be restricted for security reasons."
+        );
     }
 
     #[test]
     fn test_map_error_409() {
-        assert_eq!(map_error("error 409: conflict"), "Tunnel collision. Someone else might be using this tunnel, please retry.");
+        assert_eq!(
+            map_error("error 409: conflict"),
+            "Tunnel collision. Someone else might be using this tunnel, please retry."
+        );
     }
 
     #[test]
     fn test_map_error_503() {
-        assert_eq!(map_error("error 503: unavailable"), "No tunnels available in the pool. Please try again later.");
+        assert_eq!(
+            map_error("error 503: unavailable"),
+            "No tunnels available in the pool. Please try again later."
+        );
     }
 
     #[test]
     fn test_map_error_unexpected() {
-        assert_eq!(map_error("some weird error"), "An unexpected error occurred: some weird error");
+        assert_eq!(
+            map_error("some weird error"),
+            "An unexpected error occurred: some weird error"
+        );
     }
 }
 
@@ -141,10 +172,11 @@ async fn main() {
     info!("Starting xpose CLI v{}", env!("CARGO_PKG_VERSION"));
 
     let args = Args::parse();
+    let i18n = i18n::I18n::new(args.lang.clone());
     let registry = registry::Registry::new();
 
     if let Some(Commands::Dashboard) = args.command {
-        let mut app = dashboard::DashboardApp::new(KEY_SERVER_URL.to_string());
+        let mut app = dashboard::DashboardApp::new(KEY_SERVER_URL.to_string(), i18n);
         if let Err(e) = app.run() {
             eprintln!("Error running dashboard: {e}");
         }
@@ -152,6 +184,7 @@ async fn main() {
     }
 
     let ui = Ui::new();
+    info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
 
     let port = args
         .port
@@ -160,7 +193,7 @@ async fn main() {
     let port = match port {
         Some(p) => p,
         None => {
-            ui.info("No port specified. Scanning common ports (3000, 8000, 8080)...");
+            ui.info(i18n.t("scanning_ports"));
             let mut found_port = None;
             for &p in &[3000, 8000, 8080] {
                 if std::net::TcpStream::connect_timeout(
@@ -176,11 +209,11 @@ async fn main() {
 
             match found_port {
                 Some(p) => {
-                    ui.success(&format!("Found active service on port {p}"));
+                    ui.success(&i18n.t("found_service").replace("{}", &p.to_string()));
                     p
                 }
                 None => {
-                    ui.error("No active service found on common ports. Please specify a port.");
+                    ui.error(i18n.t("no_port_found"));
                     println!("Usage: xpose <PORT>\nExample: xpose 3000");
                     process::exit(1);
                 }
@@ -208,39 +241,50 @@ async fn main() {
     )
     .await;
 
-    ui.info("Checking environment...");
+    ui.info(i18n.t("checking_env"));
 
     if !cf_config.is_installed() {
-        let pb = ui.create_spinner("Downloading cloudflared binary...");
+        let pb = ui.create_spinner(i18n.t("downloading_binary"));
         if let Err(e) = cf_config.download().await {
             pb.finish_and_clear();
             ui.error(&map_error(&e));
             process::exit(1);
         }
-        pb.finish_with_message("Cloudflared installed successfully.");
+        pb.finish_with_message(i18n.t("installed_success"));
     } else {
-        ui.success("Cloudflared binary found.");
+        ui.success(i18n.t("binary_found"));
     }
 
     // Version Check
     if let Ok(config) = api_client.get_config().await {
         let current_version = env!("CARGO_PKG_VERSION");
-        match check_version_compatibility(current_version, &config.min_cli_version, &config.recommended_version) {
+        match check_version_compatibility(
+            current_version,
+            &config.min_cli_version,
+            &config.recommended_version,
+        ) {
             VersionStatus::Outdated => {
-                ui.error(&format!("Critical: Your CLI version (v{current_version}) is outdated. Minimum required: v{}. Please update.", config.min_cli_version));
+                ui.error(
+                    &i18n
+                        .t("version_outdated")
+                        .replace("{}", current_version)
+                        .replace("{}", &config.min_cli_version),
+                );
                 process::exit(1);
             }
             VersionStatus::UpdateAvailable => {
-                ui.info(&format!(
-                    "Update available: v{} (Current: v{}). Please run 'npm update -g xpose-cli' soon.",
-                    config.recommended_version, current_version
-                ));
+                ui.info(
+                    &i18n
+                        .t("update_available")
+                        .replace("{}", &config.recommended_version)
+                        .replace("{}", current_version),
+                );
             }
             VersionStatus::UpToDate => {}
         }
     }
 
-    let pb = ui.create_spinner("Requesting tunnel from pool...");
+    let pb = ui.create_spinner(i18n.t("requesting_tunnel"));
     let tunnel_info = match api_client
         .request_tunnel(&device_id, Some(port), Some(protocol))
         .await
@@ -252,11 +296,14 @@ async fn main() {
             process::exit(1);
         }
     };
-    pb.finish_with_message("Tunnel allocated.");
+    pb.finish_with_message(i18n.t("tunnel_allocated"));
 
     let active_tunnels = registry.list_active();
     let mut metrics_port = 55555;
-    while active_tunnels.iter().any(|t| t.metrics_port == metrics_port) {
+    while active_tunnels
+        .iter()
+        .any(|t| t.metrics_port == metrics_port)
+    {
         metrics_port += 1;
     }
 
@@ -272,8 +319,8 @@ async fn main() {
     let public_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
     sleep(Duration::from_millis(1500)).await;
 
-    ui.draw_connected_panel(port, &public_url, protocol);
-    ui.info("cloudflared is running in background. Tunnel token hidden for security.");
+    ui.draw_connected_panel(port, &public_url, protocol, &i18n);
+    ui.info(i18n.t("running_background"));
 
     let _ = registry.register(registry::TunnelEntry {
         pid: process::id(),

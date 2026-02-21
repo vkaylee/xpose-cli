@@ -183,7 +183,6 @@ fn request_is_archive(name: &str) -> bool {
     name.ends_with(".tgz") || name.ends_with(".zip") || name.ends_with(".tar.gz")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,12 +198,24 @@ mod tests {
 
     #[test]
     fn test_create_tunnel_command() {
-        let config = CloudflaredConfig { bin_path: PathBuf::from("/usr/bin/cloudflared") };
+        let config = CloudflaredConfig {
+            bin_path: PathBuf::from("/usr/bin/cloudflared"),
+        };
         let cmd = config.create_tunnel_command("test-token", 1234);
-        
+
         assert_eq!(cmd.get_program(), "/usr/bin/cloudflared");
         let args: Vec<_> = cmd.get_args().map(|s| s.to_str().unwrap()).collect();
-        assert_eq!(args, vec!["tunnel", "--metrics", "localhost:1234", "run", "--token", "test-token"]);
+        assert_eq!(
+            args,
+            vec![
+                "tunnel",
+                "--metrics",
+                "localhost:1234",
+                "run",
+                "--token",
+                "test-token"
+            ]
+        );
     }
 
     #[test]

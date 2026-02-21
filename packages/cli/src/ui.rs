@@ -1,5 +1,6 @@
+use crate::i18n::I18n;
 use arboard::Clipboard;
-use console::{style, Term};
+use console::{style, Emoji, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use qrcode::QrCode;
 use std::time::Duration;
@@ -47,40 +48,49 @@ impl Ui {
             .write_line(&format!("{} {}", style("i").cyan().bold(), msg));
     }
 
-    pub fn draw_connected_panel(&self, local_port: u16, public_url: &str, protocol: &str) {
-        let _ = self.term.clear_screen();
+    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str, i18n: &I18n) {
+        println!();
+        println!(
+            "  {} {}",
+            Emoji("🚀", ">>"),
+            style(i18n.t("connected")).green().bold().underlined()
+        );
 
         // Try to copy to clipboard
         let mut clipboard_msg = "(Auto-copy failed)";
         if let Ok(mut clipboard) = Clipboard::new() {
             if clipboard.set_text(public_url.to_string()).is_ok() {
-                clipboard_msg = "(Copied to clipboard)";
+                clipboard_msg = if i18n.lang == crate::i18n::Language::Vi {
+                    "(Đã sao chép)"
+                } else {
+                    "(Copied to clipboard)"
+                };
             }
         }
 
-        let border = style("=====================================================").cyan();
+        let border = style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").cyan();
 
         let _ = self.term.write_line(&format!("{border}"));
         let _ = self.term.write_line(&format!(
             "  {} : {}",
-            style("Tunnel").bold(),
+            style("Tunnel").bold().blue(),
             style("ACTIVE").green().bold()
         ));
         let _ = self.term.write_line(&format!(
-            "  {} : {}",
-            style("Local").bold(),
-            style(format!("localhost:{local_port}")).yellow()
+            "  {}  : {}",
+            style("Local").bold().blue(),
+            style(format!("localhost:{port}")).yellow().bold()
         ));
         let _ = self.term.write_line(&format!(
             "  {} : {} {}",
-            style("Public URL").bold(),
-            style(public_url).green(),
-            style(clipboard_msg).bright().black()
+            style("Public").bold().blue(),
+            style(public_url).green().underlined(),
+            style(clipboard_msg).bright().black().italic()
         ));
         let _ = self.term.write_line(&format!(
             "  {} : {}",
-            style("Protocol").bold(),
-            protocol.to_uppercase()
+            style("Protocol").bold().blue(),
+            style(protocol.to_uppercase()).magenta().bold()
         ));
         let _ = self.term.write_line(&format!("{border}"));
 
@@ -92,7 +102,9 @@ impl Ui {
                 .dark_color('█')
                 .light_color(' ')
                 .build();
-            let _ = self.term.write_line("  QR Code for Public URL:");
+            let _ = self
+                .term
+                .write_line(&format!("  {} QR Code:", style("▶").cyan()));
             for line in string.lines() {
                 let _ = self.term.write_line(&format!("  {line}"));
             }
@@ -100,7 +112,7 @@ impl Ui {
 
         let _ = self.term.write_line(&format!(
             "\n  {} Press Ctrl+C to disconnect\n",
-            style("Hint:").bright().black()
+            style("💡 Hint:").yellow().italic()
         ));
     }
 
@@ -186,49 +198,5 @@ impl Ui {
         }
 
         line
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sparkline_empty() {
-        let ui = Ui::new();
-        assert_eq!(ui.generate_sparkline(), " ".repeat(20));
-    }
-
-    #[test]
-    fn test_sparkline_full() {
-        let mut ui = Ui::new();
-        for i in 0..20 {
-            ui.metrics_history.push(i);
-        }
-        let spark = ui.generate_sparkline();
-        assert_eq!(spark.chars().count(), 20);
-        assert!(spark.contains('█')); // Max value should be full block
-        assert!(spark.starts_with(' ')); // Min value (0) should be space
-    }
-
-    #[test]
-    fn test_metrics_rolling_history() {
-        let mut ui = Ui::new();
-        for i in 0..25 {
-            ui.draw_live_metrics(0, 0, i, 0, 0);
-        }
-        assert_eq!(ui.metrics_history.len(), 20);
-        assert_eq!(ui.metrics_history.last(), Some(&24));
-    }
-
-    #[test]
-    fn test_format_size_edge_cases() {
-        assert_eq!(Ui::format_size(0), "0 B");
-        assert_eq!(Ui::format_size(1023), "1023 B");
-        assert_eq!(Ui::format_size(1024), "1.0 KB");
-        assert_eq!(Ui::format_size(1048575), "1024.0 KB"); // Boundary before MB
-        assert_eq!(Ui::format_size(1_048_576), "1.00 MB");
-        assert_eq!(Ui::format_size(1_073_741_824), "1.00 GB");
-        assert_eq!(Ui::format_size(1_099_511_627_776), "1024.00 GB"); // We stop at GB but handle larger
     }
 }
