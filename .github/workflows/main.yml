@@ -1,0 +1,172 @@
+name: Main CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # This job builds the shared Docker image and caches it
+  build_base_image:
+    name: 🏗️ Build Base Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push image to cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: xpose-builder:latest
+          cache-from: type=gha,scope=xpose-builder
+          cache-to: type=gha,mode=max,scope=xpose-builder
+
+  # Lint job, runs on all triggers
+  lint:
+    name: 🧹 Lint & Format
+    needs: build_base_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Load xpose-builder image from cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: xpose-builder:latest
+          load: true
+          cache-from: type=gha,scope=xpose-builder
+      - name: Lint & Format
+        shell: bash
+        run: |
+          docker run --rm -v $(pwd):/workspace xpose-builder:latest bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+
+  # Test job, runs on all triggers
+  test:
+    name: 🧪 Run Tests
+    needs: build_base_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Load xpose-builder image from cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: xpose-builder:latest
+          load: true
+          cache-from: type=gha,scope=xpose-builder
+      - name: Run Tests
+        shell: bash
+        run: |
+          docker run --rm -v $(pwd):/workspace xpose-builder:latest cargo test --workspace
+
+  # This job builds the release binaries, ONLY on tag push
+  build_release_binaries:
+    name: 📦 Build Release for ${{ matrix.target }}
+    needs: test # Depends on tests passing
+    if: startsWith(github.ref, 'refs/tags/v') # Only run for tags
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/cli -> target
+      - name: Build
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            docker build -t xpose-builder .
+            docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        working-directory: .
+      - name: Archive Binary
+        shell: bash
+        run: |
+          BIN_NAME="xpose"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            BIN_NAME="xpose.exe"
+          fi
+          tar -czvf "xpose-${{ matrix.target }}.tar.gz" -C target/${{ matrix.target }}/release "$BIN_NAME"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: xpose-${{ matrix.target }}.tar.gz
+
+  # This job deploys the key server, ONLY on tag push
+  deploy_key_server:
+    name: 🚀 Deploy Key Server
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Load xpose-builder image from cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: xpose-builder:latest
+          load: true
+          cache-from: type=gha,scope=xpose-builder
+      - name: Deploy to Cloudflare Workers
+        run: |
+          docker run --rm -v $(pwd):/workspace 
+            -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} 
+            xpose-builder bash -c "cd packages/key-server && wrangler deploy"
+
+  # This job publishes the release, ONLY on tag push
+  publish_release:
+    name: 🚢 Publish Release
+    needs: [build_release_binaries, deploy_key_server]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "**/*.tar.gz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to NPM
+        run: |
+          docker build -t xpose-publisher .
+          docker run --rm -v $(pwd):/workspace -e NPM_TOKEN=${{ secrets.NPM_TOKEN }} xpose-publisher bash -c "
+            cd packages/cli && 
+            echo '//registry.npmjs.org/:_authToken=\${NPM_TOKEN}' > .npmrc && 
+            npm publish --access public
+          "
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
