@@ -20,25 +20,18 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+      - name: Build Docker Builder
+        run: docker build -t xpose-builder .
 
-      - name: Check Formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Lint & Format
+        run: |
+          docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
 
   test:
     name: Run Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Core Tests
-        run: cargo test --workspace
+      - name: Run Tests
+        run: |
+          docker run --rm -v $(pwd):/workspace xpose-builder cargo test --workspace
