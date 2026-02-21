@@ -13,7 +13,7 @@
 		{
 			"binding": "DB",
 			"database_name": "tunnel-db",
-			"database_id": "YOUR_DATABASE_ID_HERE",
+			"database_id": "00000000-0000-0000-0000-000000000000", // TODO: Replace with your actual D1 database ID from `wrangler d1 create`
 			"migrations_dir": "./migrations"
 		}
 	],

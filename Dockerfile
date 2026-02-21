@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g wrangler@3 \
+    && npm install -g wrangler@4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Setup Rust components, sccache, and worker-build in one step
