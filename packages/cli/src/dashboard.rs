@@ -111,20 +111,12 @@ impl DashboardApp {
             self.table_state.select(Some(0));
         }
 
-        // Fetch metrics for all tunnels (or at least the visible/selected ones)
+        // Fetch metrics for all tunnels
         for tunnel in &self.tunnels {
             let url = format!("http://localhost:{}/metrics", tunnel.metrics_port);
             if let Ok(res) = self.metrics_client.get(&url).send() {
                 if let Ok(text) = res.text() {
-                    let mut rx: u64 = 0;
-                    let mut tx: u64 = 0;
-                    for line in text.lines() {
-                        if line.starts_with("cloudflared_tunnel_rx_bytes") {
-                            rx = line.split_whitespace().last().and_then(|v| v.parse().ok()).unwrap_or(0);
-                        } else if line.starts_with("cloudflared_tunnel_tx_bytes") {
-                            tx = line.split_whitespace().last().and_then(|v| v.parse().ok()).unwrap_or(0);
-                        }
-                    }
+                    let (rx, tx) = parse_metrics(&text);
 
                     let entry = self.metrics.entry(tunnel.pid).or_default();
                     if let Some(last) = entry.last_update {
@@ -250,5 +242,50 @@ impl DashboardApp {
         let footer = Paragraph::new(" [Q] Quit  [↑/↓] Navigate")
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, rects[3]);
+    }
+}
+
+pub fn parse_metrics(text: &str) -> (u64, u64) {
+    let mut rx = 0;
+    let mut tx = 0;
+    for line in text.lines() {
+        if line.starts_with("cloudflared_tunnel_rx_bytes") {
+            rx = line.split_whitespace().last().and_then(|v| v.parse().ok()).unwrap_or(0);
+        } else if line.starts_with("cloudflared_tunnel_tx_bytes") {
+            tx = line.split_whitespace().last().and_then(|v| v.parse().ok()).unwrap_or(0);
+        }
+    }
+    (rx, tx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_metrics() {
+        let text = "cloudflared_tunnel_rx_bytes 1024\ncloudflared_tunnel_tx_bytes 2048";
+        let (rx, tx) = parse_metrics(text);
+        assert_eq!(rx, 1024);
+        assert_eq!(tx, 2048);
+    }
+
+    #[test]
+    fn test_dashboard_navigation() {
+        let mut app = DashboardApp::new();
+        app.tunnels = vec![
+            TunnelEntry { pid: 1, port: 3000, protocol: "tcp".to_string(), url: "u1".to_string(), start_time: 0, metrics_port: 0 },
+            TunnelEntry { pid: 2, port: 8080, protocol: "tcp".to_string(), url: "u2".to_string(), start_time: 0, metrics_port: 0 },
+        ];
+        app.table_state.select(Some(0));
+
+        app.next();
+        assert_eq!(app.table_state.selected(), Some(1));
+        
+        app.next();
+        assert_eq!(app.table_state.selected(), Some(0)); // Boundary wrap
+
+        app.previous();
+        assert_eq!(app.table_state.selected(), Some(1)); // Boundary wrap
     }
 }

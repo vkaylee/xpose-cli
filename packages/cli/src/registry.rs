@@ -112,4 +112,54 @@ mod tests {
         registry.unregister(entry.pid).unwrap();
         assert_eq!(registry.list_all().len(), 0);
     }
+
+    #[test]
+    fn test_registry_zombie_cleanup() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tunnels.json");
+        let registry = Registry { path: path.clone() };
+
+        // Real PID (this process)
+        let active_entry = TunnelEntry {
+            pid: process::id(),
+            port: 3000,
+            protocol: "tcp".to_string(),
+            url: "http://active".to_string(),
+            start_time: get_now_secs(),
+            metrics_port: 55555,
+        };
+
+        // Fake PID (unlikely to exist)
+        let zombie_entry = TunnelEntry {
+            pid: 999999,
+            port: 3001,
+            protocol: "tcp".to_string(),
+            url: "http://zombie".to_string(),
+            start_time: get_now_secs(),
+            metrics_port: 55556,
+        };
+
+        registry.register(active_entry).unwrap();
+        registry.register(zombie_entry).unwrap();
+        
+        assert_eq!(registry.list_all().len(), 2);
+        
+        let active = registry.list_active();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].url, "http://active");
+        
+        // Final check: registry should have cleaned itself up
+        assert_eq!(registry.list_all().len(), 1);
+    }
+
+    #[test]
+    fn test_registry_malformed_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tunnels.json");
+        fs::write(&path, "invalid json {[[[").unwrap();
+        
+        let registry = Registry { path };
+        let entries = registry.list_all();
+        assert_eq!(entries.len(), 0); // Should fallback to empty list
+    }
 }
