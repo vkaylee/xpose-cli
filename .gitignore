@@ -1,12 +1,16 @@
 # Rust
-/target/
+target/
+**/target/
 **/*.rs.bk
 Cargo.lock
 
 # Node.js
 node_modules/
+**/node_modules/
 dist/
+**/dist/
 build/
+**/build/
 .npm
 npm-debug.log*
 yarn-debug.log*
