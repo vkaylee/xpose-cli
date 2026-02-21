@@ -140,8 +140,8 @@ jobs:
           cache-from: type=gha,scope=xpose-builder
       - name: Deploy to Cloudflare Workers
         run: |
-          docker run --rm -v $(pwd):/workspace 
-            -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} 
+          docker run --rm -v $(pwd):/workspace \
+            -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} \
             xpose-builder bash -c "cd packages/key-server && wrangler deploy"
 
   # This job publishes the release, ONLY on tag push
