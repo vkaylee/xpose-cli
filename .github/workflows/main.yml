@@ -107,19 +107,29 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
         working-directory: .
-      - name: Archive Binary
+      - name: Archive Binary & Generate Checksum
         shell: bash
         run: |
           BIN_NAME="xpose"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             BIN_NAME="xpose.exe"
           fi
-          tar -czvf "xpose-${{ matrix.target }}.tar.gz" -C target/${{ matrix.target }}/release "$BIN_NAME"
+          PKG_NAME="xpose-${{ matrix.target }}.tar.gz"
+          tar -czvf "$PKG_NAME" -C target/${{ matrix.target }}/release "$BIN_NAME"
+          
+          # Generate checksum
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            shasum -a 256 "$PKG_NAME" > "$PKG_NAME.sha256"
+          else
+            sha256sum "$PKG_NAME" > "$PKG_NAME.sha256"
+          fi
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: xpose-${{ matrix.target }}.tar.gz
+          path: |
+            xpose-${{ matrix.target }}.tar.gz
+            xpose-${{ matrix.target }}.tar.gz.sha256
 
   # This job deploys the key server, ONLY on tag push
   deploy_key_server:

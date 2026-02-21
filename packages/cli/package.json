@@ -24,9 +24,13 @@
     "author": "",
     "license": "MIT",
     "scripts": {
-        "postinstall": "node bin/install.js"
+        "postinstall": "node bin/install.js",
+        "test:install": "node bin/test-install.js"
     },
     "engines": {
         "node": ">=16.0.0"
+    },
+    "dependencies": {
+        "cli-progress": "^3.12.0"
     }
 }
