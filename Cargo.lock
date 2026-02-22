@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "key-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -3794,7 +3794,7 @@ dependencies = [
 
 [[package]]
 name = "xpose"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "chrono",

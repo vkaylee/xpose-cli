@@ -28,12 +28,6 @@ struct AuthInitResponse {
     verify_url: String,
 }
 
-#[derive(Deserialize)]
-struct AuthCheckRequest {
-    session_id: String,
-    auth_token: String,
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ServerConfigResponse {
     pub min_cli_version: String,
@@ -61,8 +55,8 @@ struct DeviceRequest {
     device_id: String,
 }
 
-pub const MIN_CLI_VERSION: &str = "0.1.0";
-pub const RECOMMENDED_VERSION: &str = "0.1.0";
+pub const MIN_CLI_VERSION: &str = "0.3.0";
+pub const RECOMMENDED_VERSION: &str = "0.3.0";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
@@ -171,15 +165,15 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             let db = ctx.env.d1("DB")?;
             let session_id = uuid::Uuid::new_v4().to_string();
             let auth_token = uuid::Uuid::new_v4().to_string();
-            
+
             db.prepare("INSERT INTO auth_sessions (id, auth_token, status) VALUES (?, ?, 'PENDING')")
                 .bind(&[session_id.clone().into(), auth_token.clone().into()])?
                 .run()
                 .await?;
-            
+
             let url = req.url()?;
             let verify_url = format!("{}://{}/api/auth/verify?s={}", url.scheme(), url.host_str().unwrap_or("localhost"), session_id);
-            
+
             Response::from_json(&AuthInitResponse {
                 session_id,
                 auth_token,
@@ -190,13 +184,13 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             let url = req.url()?;
             let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
             let auth_token = url.query_pairs().find(|(k, _)| k == "t").map(|(_, v)| v.to_string()).unwrap_or_default();
-            
+
             let db = ctx.env.d1("DB")?;
             let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ?")
                 .bind(&[session_id.into(), auth_token.into()])?
                 .first::<AuthSession>(None)
                 .await?;
-            
+
             match session {
                 Some(s) => Response::from_json(&serde_json::json!({ "status": s.status })),
                 None => Response::error("Session not found", 404),
@@ -205,7 +199,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         .get_async("/api/auth/verify", |req, _| async move {
             let url = req.url()?;
             let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
-            
+
             let html = format!(r#"
                 <!DOCTYPE html>
                 <html>
@@ -233,7 +227,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 </body>
                 </html>
             "#, session_id);
-            
+
             let headers = Headers::new();
             headers.set("Content-Type", "text/html")?;
             Ok(Response::ok(html)?.with_headers(headers))
@@ -244,13 +238,13 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 FormEntry::Field(f) => Some(f),
                 _ => None
             }).unwrap_or_default();
-            
+
             let db = ctx.env.d1("DB")?;
             db.prepare("UPDATE auth_sessions SET status = 'VERIFIED' WHERE id = ? AND status = 'PENDING'")
                 .bind(&[session_id.into()])?
                 .run()
                 .await?;
-            
+
             let html = r#"
                 <!DOCTYPE html>
                 <html>
@@ -290,11 +284,11 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                     .bind(&[sid.clone().into(), token.into()])?
                     .first::<AuthSession>(None)
                     .await?;
-                
+
                 if session.is_none() {
                     return Response::error("Session not verified or invalid", 401);
                 }
-                
+
                 // Mark session as USED
                 db.prepare("UPDATE auth_sessions SET status = 'USED' WHERE id = ?")
                     .bind(&[sid.into()])?
@@ -499,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(MIN_CLI_VERSION, "0.1.0");
+        assert_eq!(MIN_CLI_VERSION, "0.3.0");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 }

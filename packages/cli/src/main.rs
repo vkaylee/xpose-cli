@@ -12,14 +12,14 @@ use clap::{
     builder::styling::{AnsiColor, Effects, Styles},
     Parser,
 };
+use console::style;
 use dotenvy::dotenv;
 use std::env;
 use std::fs;
 use std::process;
-use uuid::Uuid;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
-use console::style;
+use uuid::Uuid;
 
 use api::ApiClient;
 use cloudflared::CloudflaredConfig;
@@ -107,71 +107,6 @@ fn check_version_compatibility(current: &str, min: &str, recommended: &str) -> V
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_version_compatibility() {
-        assert_eq!(
-            check_version_compatibility("0.1.0", "0.1.0", "0.1.0"),
-            VersionStatus::UpToDate
-        );
-        assert_eq!(
-            check_version_compatibility("0.1.0", "0.2.0", "0.2.0"),
-            VersionStatus::Outdated
-        );
-        assert_eq!(
-            check_version_compatibility("0.1.0", "0.1.0", "0.2.0"),
-            VersionStatus::UpdateAvailable
-        );
-        assert_eq!(
-            check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
-            VersionStatus::UpToDate
-        );
-    }
-
-    #[test]
-    fn test_map_error_timeout() {
-        assert_eq!(
-            map_error("connection timeout"),
-            "Request timed out. Please check your internet connection."
-        );
-    }
-
-    #[test]
-    fn test_map_error_403() {
-        assert_eq!(
-            map_error("error 403: forbidden"),
-            "Access denied. This port might be restricted for security reasons."
-        );
-    }
-
-    #[test]
-    fn test_map_error_409() {
-        assert_eq!(
-            map_error("error 409: conflict"),
-            "Tunnel collision. Someone else might be using this tunnel, please retry."
-        );
-    }
-
-    #[test]
-    fn test_map_error_503() {
-        assert_eq!(
-            map_error("error 503: unavailable"),
-            "No tunnels available in the pool. Please try again later."
-        );
-    }
-
-    #[test]
-    fn test_map_error_unexpected() {
-        assert_eq!(
-            map_error("some weird error"),
-            "An unexpected error occurred: some weird error"
-        );
-    }
-}
-
 async fn send_telemetry(api: &ApiClient, event: &str, device_id: &str, details: serde_json::Value) {
     let payload = serde_json::json!({
         "event": event,
@@ -186,21 +121,23 @@ async fn send_telemetry(api: &ApiClient, event: &str, device_id: &str, details: 
 async fn main() {
     let _ = dotenv();
     setup_logging().expect("Failed to initialize logging");
-    
+
     // Load config from xpose.yaml
     let yaml_config = XposeConfig::load();
 
     let args = Args::parse();
-    
+
     // Merge i18n: Args > YAML > Auto-detect
     let lang = args.lang.clone().or(yaml_config.lang.clone());
     let i18n = i18n::I18n::new(lang);
     let ui = Ui::new(i18n.clone());
-    
+
     let registry = registry::Registry::new();
 
     if let Some(command) = args.command {
-        let server_url = args.server_url.clone()
+        let server_url = args
+            .server_url
+            .clone()
             .or(yaml_config.server_url.clone())
             .unwrap_or_else(|| KEY_SERVER_URL.to_string());
 
@@ -270,7 +207,9 @@ async fn main() {
         Err(_) => "unknown-device".to_string(),
     };
 
-    let server_url = args.server_url.clone()
+    let server_url = args
+        .server_url
+        .clone()
         .or(yaml_config.server_url.clone())
         .unwrap_or_else(|| KEY_SERVER_URL.to_string());
 
@@ -638,14 +577,22 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
     };
 
     let current = env!("CARGO_PKG_VERSION");
-    let status = check_version_compatibility(current, &config.min_cli_version, &config.recommended_version);
+    let status = check_version_compatibility(
+        current,
+        &config.min_cli_version,
+        &config.recommended_version,
+    );
 
     if !force && status == VersionStatus::UpToDate {
         ui.success(i18n.t("up_to_date"));
         return;
     }
 
-    ui.info(&format!("{} v{}...", i18n.t("updating"), config.recommended_version));
+    ui.info(&format!(
+        "{} v{}...",
+        i18n.t("updating"),
+        config.recommended_version
+    ));
 
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
@@ -721,11 +668,82 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
 
     if let Err(e) = fs::rename(&temp_exe, &current_exe) {
         pb.finish_and_clear();
-        ui.error(&format!("Failed to replace binary: {e}. Try running with sudo/admin."));
+        ui.error(&format!(
+            "Failed to replace binary: {e}. Try running with sudo/admin."
+        ));
         let _ = fs::remove_file(&temp_exe);
         return;
     }
 
     pb.finish_and_clear();
-    ui.success(&format!("{} v{}", i18n.t("update_success"), config.recommended_version));
+    ui.success(&format!(
+        "{} v{}",
+        i18n.t("update_success"),
+        config.recommended_version
+    ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_compatibility() {
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.1.0", "0.1.0"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.2.0", "0.2.0"),
+            VersionStatus::Outdated
+        );
+        assert_eq!(
+            check_version_compatibility("0.1.0", "0.1.0", "0.2.0"),
+            VersionStatus::UpdateAvailable
+        );
+        assert_eq!(
+            check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
+            VersionStatus::UpToDate
+        );
+    }
+
+    #[test]
+    fn test_map_error_timeout() {
+        assert_eq!(
+            map_error("connection timeout"),
+            "Request timed out. Please check your internet connection."
+        );
+    }
+
+    #[test]
+    fn test_map_error_403() {
+        assert_eq!(
+            map_error("error 403: forbidden"),
+            "Access denied. This port might be restricted for security reasons."
+        );
+    }
+
+    #[test]
+    fn test_map_error_409() {
+        assert_eq!(
+            map_error("error 409: conflict"),
+            "Tunnel collision. Someone else might be using this tunnel, please retry."
+        );
+    }
+
+    #[test]
+    fn test_map_error_503() {
+        assert_eq!(
+            map_error("error 503: unavailable"),
+            "No tunnels available in the pool. Please try again later."
+        );
+    }
+
+    #[test]
+    fn test_map_error_unexpected() {
+        assert_eq!(
+            map_error("some weird error"),
+            "An unexpected error occurred: some weird error"
+        );
+    }
 }

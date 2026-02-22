@@ -114,7 +114,10 @@ impl Ui {
             Emoji("🔒", "!!"),
             style("SECURITY HANDSHAKE").yellow().bold()
         );
-        println!("  {}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+        println!(
+            "  {}",
+            style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim()
+        );
     }
 
     pub fn draw_qr_auth(&self, url: &str) {
