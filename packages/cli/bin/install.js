@@ -65,6 +65,9 @@ function getFileContent(url) {
             if (res.statusCode === 301 || res.statusCode === 302) {
                 return getFileContent(res.headers.location).then(resolve).catch(reject);
             }
+            if (res.statusCode !== 200) {
+                return reject(new Error(`Failed to fetch ${url} (Status: ${res.statusCode})`));
+            }
             let data = '';
             res.on('data', hunk => data += hunk);
             res.on('end', () => resolve(data.trim()));
@@ -168,4 +171,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { download, getReleaseName };
+module.exports = { download, getReleaseName, getFileContent };
