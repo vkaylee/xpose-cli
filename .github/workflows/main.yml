@@ -154,10 +154,38 @@ jobs:
             xpose-${{ matrix.target }}.tar.gz
             xpose-${{ matrix.target }}.tar.gz.sha256
 
+  # Build Docker image for key server (ONLY on tag push)
+  build_key_server_docker:
+    name: 🔨 Build Docker Image
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}/xpose-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Deploy key server (ONLY on tag push)
   deploy_key_server:
     name: 🚀 Deploy Key Server
-    needs: test
+    needs: build_key_server_docker
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -175,14 +203,14 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build Docker Image (with cache)
+      - name: Pull Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
+          pull: true
           load: true
-          tags: xpose-builder:latest
+          tags: ghcr.io/${{ github.repository }}/xpose-builder:latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Deploy to Cloudflare Workers
         env:
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
@@ -194,7 +222,7 @@ jobs:
   # Publish Release
   publish_release:
     name: 🚢 Publish Release
-    needs: [build_release_binaries, deploy_key_server]
+    needs: [build_release_binaries, build_key_server_docker]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -214,6 +242,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Debug NPM
+        working-directory: packages/cli
+        run: bash ${{ github.workspace }}/.github/scripts/debug-npm.sh
 
       - name: Publish to NPM
         working-directory: packages/cli
