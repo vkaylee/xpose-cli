@@ -1,0 +1,135 @@
+name: Smart Test Selection
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+jobs:
+  analyze:
+    name: 📊 Analyze Changes
+    runs-on: ubuntu-latest
+    outputs:
+      test_suites: ${{ steps.analyze.outputs.suites }}
+      affected_crate: ${{ steps.analyze.outputs.crate }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Analyze changed files
+        id: analyze
+        run: |
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          
+          echo "Changed files:"
+          echo "$changed"
+          echo "---"
+          
+          suites=()
+          crate=""
+          
+          # Analyze which packages/crates are affected
+          if echo "$changed" | grep -q "^packages/cli/"; then
+            suites+=("cli")
+            crate="cli"
+          fi
+          
+          if echo "$changed" | grep -q "^packages/key-server/"; then
+            suites+=("key-server")
+            if [ -n "$crate" ]; then
+              crate="$crate,key-server"
+            else
+              crate="key-server"
+            fi
+          fi
+          
+          if echo "$changed" | grep -q "^packages/"; then
+            suites+=("integration")
+          fi
+          
+          if echo "$changed" | grep -q "^src/"; then
+            suites+=("core")
+          fi
+          
+          # If Cargo.toml or Cargo.lock changed, run all tests
+          if echo "$changed" | grep -qE "^Cargo\.(toml|lock)$"; then
+            suites=("all")
+            crate="all"
+          fi
+          
+          # Default to all if nothing specific matched
+          if [ ${#suites[@]} -eq 0 ]; then
+            suites=("all")
+            crate="all"
+          fi
+          
+          # Convert array to JSON string
+          suites_json=$(IFS=','; echo "${suites[*]}")
+          echo "suites=[\"$suites_json\"]" >> $GITHUB_OUTPUT
+          echo "crate=$crate" >> $GITHUB_OUTPUT
+          
+          echo "Running suites: ${suites[*]}"
+          echo "Affected crates: $crate"
+
+  test:
+    name: 🧪 Test - ${{ matrix.suite }}
+    needs: analyze
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJson(needs.analyze.outputs.test_suites) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo & Target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/cargo_registry
+            /tmp/cargo_git
+            /tmp/sccache_cache
+            /tmp/target_cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (with cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: xpose-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run CLI tests
+        if: matrix.suite == 'cli'
+        run: NO_BUILD=true ./run-in-docker.sh run cargo test -p xpose-cli
+
+      - name: Run Key Server tests
+        if: matrix.suite == 'key-server'
+        run: NO_BUILD=true ./run-in-docker.sh run cargo test -p key-server
+
+      - name: Run Integration tests
+        if: matrix.suite == 'integration'
+        run: NO_BUILD=true ./run-in-docker.sh test
+
+      - name: Run Core tests
+        if: matrix.suite == 'core'
+        run: NO_BUILD=true ./run-in-docker.sh test
+
+      - name: Run All tests
+        if: matrix.suite == 'all'
+        run: NO_BUILD=true ./run-in-docker.sh test

@@ -2,21 +2,21 @@ name: Main CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Lint job
   lint:
     name: 🧹 Lint & Format
     runs-on: ubuntu-latest
@@ -47,7 +47,6 @@ jobs:
       - name: Lint & Format
         run: NO_BUILD=true ./run-in-docker.sh lint
 
-  # Test job
   test:
     name: 🧪 Run Tests
     runs-on: ubuntu-latest
@@ -78,7 +77,6 @@ jobs:
       - name: Run Tests
         run: NO_BUILD=true ./run-in-docker.sh test
 
-  # Build release binaries (ONLY on tag push)
   build_release_binaries:
     name: 📦 Build Release for ${{ matrix.target }}
     needs: test
@@ -131,7 +129,6 @@ jobs:
           if [[ "${{ matrix.target }}" == *"-linux-musl" ]]; then
             TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && XPOSE_SERVER_URL=${XPOSE_SERVER_URL} CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc cargo build --release --locked --target ${{ matrix.target }}"
           else
-            # For non-linux targets, use host toolchain (simplest for now)
             rustup target add ${{ matrix.target }}
             XPOSE_SERVER_URL=${XPOSE_SERVER_URL} cargo build --release --locked --target ${{ matrix.target }}
           fi
@@ -158,7 +155,6 @@ jobs:
             xpose-${{ matrix.target }}.tar.gz
             xpose-${{ matrix.target }}.tar.gz.sha256
 
-  # Build Docker image for key server (ONLY on tag push)
   build_key_server_docker:
     name: 🔨 Build Docker Image
     needs: test
@@ -186,7 +182,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Deploy key server (ONLY on tag push)
   deploy_key_server:
     name: 🚀 Deploy Key Server
     needs: build_key_server_docker
@@ -223,7 +218,6 @@ jobs:
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
           NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && wrangler d1 migrations apply tunnel-db --remote && wrangler deploy"
 
-  # Publish Release
   publish_release:
     name: 🚢 Publish Release
     needs: [build_release_binaries, build_key_server_docker]

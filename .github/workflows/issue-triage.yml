@@ -1,0 +1,68 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened]
+
+jobs:
+  triage:
+    name: 📋 Issue Triage
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Validate issue content
+        run: |
+          if [[ -z "${{ github.event.issue.title }}" ]]; then
+            echo "ISSUE_TITLE_EMPTY=true" >> $GITHUB_OUTPUT
+          else
+            echo "ISSUE_TITLE_EMPTY=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @anthropic-ai/sdk
+
+      - name: Analyze issue
+        id: analyze
+        run: node .github/scripts/triage-issue.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply labels
+        if: steps.analyze.outputs.labels != ''
+        run: echo "${{ steps.analyze.outputs.labels }}" | xargs -I {} gh issue edit ${{ github.event.issue.number }} --add-label "{}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add initial response
+        if: steps.analyze.outputs.needs_repro == 'true'
+        run: |
+          cat > /tmp/triage_msg.txt << 'EOF'
+          Thanks for reporting this issue!
+
+          To help us investigate, could you please provide:
+          - Steps to reproduce the issue
+          - Expected behavior
+          - Actual behavior
+          - Environment (OS, version, etc.)
+
+          This will help us resolve your issue faster. 🙏
+          EOF
+          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/triage_msg.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
