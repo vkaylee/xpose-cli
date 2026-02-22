@@ -10,7 +10,8 @@ struct Tunnel {
     device_id: Option<String>,
     port: Option<u16>,
     protocol: Option<String>,
-    last_heartbeat: Option<f64>,
+    last_heartbeat: Option<i64>,
+    created_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -311,7 +312,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 }
             }
 
-            let now = (Date::now().as_millis() / 1000) as f64;
+            let now = (Date::now().as_millis() / 1000) as i64;
 
             // 1. Check if device already has a busy tunnel
             let existing: Option<Tunnel> = db.prepare("SELECT * FROM tunnels WHERE status = 'BUSY' AND device_id = ?")
@@ -372,7 +373,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         .post_async("/api/heartbeat", |mut req, ctx| async move {
             let body: DeviceRequest = req.json().await?;
             let db = ctx.env.d1("DB")?;
-            let now = (Date::now().as_millis() / 1000) as f64;
+            let now = (Date::now().as_millis() / 1000) as i64;
 
             let res = db.prepare("UPDATE tunnels SET last_heartbeat = ? WHERE device_id = ? AND status = 'BUSY'")
                 .bind(&[now.into(), body.device_id.into()])?
@@ -435,7 +436,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let db = env.d1("DB").expect("D1 Database not found");
-    let sixty_mins_ago = (Date::now().as_millis() as f64 / 1000.0) - 3600.0;
+    let sixty_mins_ago = (Date::now().as_millis() / 1000) as i64 - 3600;
 
     let res = db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE status = 'BUSY' AND last_heartbeat < ?")
         .bind(&[sixty_mins_ago.into()])
@@ -490,6 +491,7 @@ mod tests {
             port: None,
             protocol: None,
             last_heartbeat: None,
+            created_at: None,
         };
         let json = serde_json::to_string(&tunnel).unwrap();
         assert!(json.contains("\"id\":\"t1\""));

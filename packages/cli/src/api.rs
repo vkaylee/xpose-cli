@@ -135,9 +135,11 @@ impl ApiClient {
                 Err("Invalid response format from server".to_string())
             }
         } else {
-            Err(data
+            let err_msg = data
                 .error
-                .unwrap_or_else(|| "Unknown server error".to_string()))
+                .unwrap_or_else(|| format!("Unknown server error (Status: {})", status));
+            error!("Server error: {} - Body: {}", status, text);
+            Err(err_msg)
         }
     }
 
