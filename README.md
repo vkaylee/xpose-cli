@@ -1,7 +1,7 @@
 # Cloudflare Tunnel CLI (xpose)
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-0.4.0-green.svg)
+![Version](https://img.shields.io/badge/version-0.4.1-green.svg)
 
 A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels (`cloudflared`). Written entirely in Rust 🦀, distributed via NPM.
 
@@ -20,7 +20,7 @@ A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels 
   - **Auto-copies** the public URL to your clipboard.
   - Automatically scans common ports (3000, 8000, 8080) if no port is provided.
 - **Smart Cloudflared Management**:
-  - Downloads the correct statically linked binary for your OS and Architecture (Windows, macOS Intel/ARM, Linux).
+  - Downloads the correct statically linked binary for your OS and Architecture (Windows, macOS Intel/ARM, Linux x64/ARM64, Android Termux).
   - Background "Tunnel Pooling" avoids Cloudflare limits and ensures instant connections.
 - **Hardened Security**:
   - Built-in IP Rate Limiting.
