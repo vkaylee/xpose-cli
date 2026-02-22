@@ -69,12 +69,23 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker Image (with cache)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: xpose-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Build
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            docker build -x buildkit -t xpose-builder .
-            docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
+            NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
           else
             # For non-linux targets, use host toolchain (simplest for now)
             rustup target add ${{ matrix.target }}
@@ -126,7 +137,7 @@ jobs:
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
         run: |
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
-          NO_BUILD=true docker compose run --rm dev bash -c "cd packages/key-server && wrangler deploy"
+          NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && wrangler deploy"
 
   # Publish Release
   publish_release:
@@ -146,7 +157,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to NPM
         run: |
-          docker compose run --rm dev bash -c "
+          NO_BUILD=true ./run-in-docker.sh run bash -c "
             cd packages/cli && 
             echo '//registry.npmjs.org/:_authToken=\${NPM_TOKEN}' > .npmrc && 
             npm publish --access public

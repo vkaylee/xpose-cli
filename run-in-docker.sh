@@ -8,6 +8,7 @@ show_usage() {
     echo "Commands:"
     echo "  lint    Run cargo fmt and clippy checks"
     echo "  test    Run workspace unit tests"
+    echo "  run     Run a custom command inside the container"
     echo "  all     Run both lint and test (default)"
     echo "  help    Show this help message"
     echo ""
@@ -53,6 +54,11 @@ case "$COMMAND" in
     test)
         echo "🧪 Running Tests in Docker..."
         docker compose run --rm dev cargo test --workspace
+        ;;
+    run)
+        shift
+        echo "🏃 Running custom command in Docker: $*"
+        docker compose run --rm dev "$@"
         ;;
     all)
         echo "🦀 Running Lint & Format in Docker..."
