@@ -208,6 +208,11 @@ jobs:
           files: "**/*.tar.gz"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Publish to NPM
         run: |
           cd packages/cli
