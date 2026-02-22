@@ -128,8 +128,8 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && XPOSE_SERVER_URL=${XPOSE_SERVER_URL} cargo build --release --locked --target x86_64-unknown-linux-musl"
+          if [[ "${{ matrix.target }}" == *"-linux-musl" ]]; then
+            TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && XPOSE_SERVER_URL=${XPOSE_SERVER_URL} CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc cargo build --release --locked --target ${{ matrix.target }}"
           else
             # For non-linux targets, use host toolchain (simplest for now)
             rustup target add ${{ matrix.target }}

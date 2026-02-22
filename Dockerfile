@@ -15,10 +15,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     musl-tools \
     build-essential \
+    cmake \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install aarch64-linux-musl toolchain
+RUN curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xzC /usr/local --strip-components=1
 
 # Pre-compile dependencies
 RUN rustup target add x86_64-unknown-linux-musl && \
+    rustup target add aarch64-unknown-linux-musl && \
     cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # --- Stage 3: Developer Environment ---
@@ -33,13 +39,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     musl-tools \
     build-essential \
+    cmake \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g wrangler@4 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install aarch64-linux-musl toolchain (again for dev stage)
+RUN curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xzC /usr/local --strip-components=1
+
 # Setup Rust components, sccache, and worker-build in one step
 RUN rustup target add x86_64-unknown-linux-musl && \
+    rustup target add aarch64-unknown-linux-musl && \
     rustup target add wasm32-unknown-unknown && \
     rustup component add rustfmt clippy && \
     cargo install --locked sccache --version ^0.8 && \
