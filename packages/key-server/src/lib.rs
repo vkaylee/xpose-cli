@@ -54,7 +54,6 @@ pub fn is_port_allowed(port: u16) -> bool {
     ALLOWED_PORTS.contains(&port)
 }
 
-
 fn is_safe_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     for kw in BANNED_KEYWORDS {
@@ -254,10 +253,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             let res = db.prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
                 .all()
                 .await?;
-            
+
             let mut busy = 0;
             let mut available = 0;
-            
+
             let rows: Vec<serde_json::Value> = res.results()?;
             for row in rows {
                 let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
