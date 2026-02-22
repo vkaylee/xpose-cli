@@ -16,6 +16,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::io;
 use std::time::{Duration, Instant};
+use sysinfo::{Pid, ProcessesToUpdate};
 
 #[derive(Default, Clone)]
 struct TunnelMetrics {
@@ -208,8 +209,9 @@ impl DashboardApp {
         if let Some(i) = self.table_state.selected() {
             if let Some(tunnel) = self.tunnels.get(i) {
                 let pid = tunnel.pid;
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                self.sys.refresh_processes(ProcessesToUpdate::All, true);
+                if let Some(process) = self.sys.process(Pid::from(pid as usize)) {
+                    process.kill();
                 }
                 let _ = self.registry.unregister(pid);
                 self.on_tick();
@@ -220,15 +222,16 @@ impl DashboardApp {
     fn restart_selected_session(&mut self) {
         if let Some(i) = self.table_state.selected() {
             if let Some(tunnel) = self.tunnels.get(i) {
-                let _pid = tunnel.pid;
+                let pid = tunnel.pid;
                 let _port = tunnel.port;
                 let _protocol = tunnel.protocol.clone();
 
                 // Stop current
-                unsafe {
-                    libc::kill(tunnel.pid as libc::pid_t, libc::SIGTERM);
+                self.sys.refresh_processes(ProcessesToUpdate::All, true);
+                if let Some(process) = self.sys.process(Pid::from(pid as usize)) {
+                    process.kill();
                 }
-                let _ = self.registry.unregister(tunnel.pid);
+                let _ = self.registry.unregister(pid);
 
                 // Re-launch is handled by the user for now in this version,
                 // but we trigger the registry update immediately.

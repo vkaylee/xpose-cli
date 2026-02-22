@@ -28,7 +28,6 @@ arboard = "3.4.1"
 log = "0.4.26"
 fern = "0.7.1"
 chrono = { workspace = true }
-libc = "0.2.169"
 sysinfo = "0.33.1"
 
 [dev-dependencies]
