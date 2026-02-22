@@ -221,7 +221,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
-          NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && wrangler deploy"
+          NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && wrangler d1 migrations apply tunnel-db --remote --yes && wrangler deploy"
 
   # Publish Release
   publish_release:

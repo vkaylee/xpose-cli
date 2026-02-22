@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(MIN_CLI_VERSION, "0.3.0");
+        assert_eq!(MIN_CLI_VERSION, "0.4.7");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 }
