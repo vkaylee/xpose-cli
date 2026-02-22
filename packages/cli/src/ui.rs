@@ -125,7 +125,7 @@ impl Ui {
     }
 
     fn draw_qr(&self, data: &str, label: &str) {
-        if let Ok(code) = QrCode::new(data) {
+        if let Ok(code) = QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L) {
             let width = code.width();
             let _ = self
                 .term

@@ -286,7 +286,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             let body: RequestTunnelRequest = req.json().await?;
 
-            // QR Auth Check
+            // QR Auth Check (Optional for regular usage, but validated if provided)
             if let (Some(sid), Some(token)) = (body.session_id, body.auth_token) {
                 let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ? AND status = 'VERIFIED'")
                     .bind(&[sid.clone().into(), token.into()])?
@@ -302,8 +302,6 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                     .bind(&[sid.into()])?
                     .run()
                     .await?;
-            } else {
-                return json_error("Authentication token required", 401);
             }
 
             // Port restriction
@@ -313,7 +311,6 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 }
             }
 
-            let db = ctx.env.d1("DB")?;
             let now = (Date::now().as_millis() / 1000) as f64;
 
             // 1. Check if device already has a busy tunnel

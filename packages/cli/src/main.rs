@@ -44,6 +44,7 @@ fn cli_styles() -> Styles {
 #[derive(Parser, Debug)]
 #[command(
     name = "xpose",
+    version,
     about = "Cloudflare Tunnel CLI for developers",
     styles = cli_styles(),
     after_help = "\x1b[1;32mEXAMPLES:\x1b[0m\n  \x1b[90m# Expose local port 3000\x1b[0m\n  \x1b[36m$ xpose 3000\x1b[0m\n\n  \x1b[90m# Open interactive dashboard\x1b[0m\n  \x1b[36m$ xpose dashboard\x1b[0m\n"
@@ -171,6 +172,56 @@ async fn main() {
 
         match command {
             Commands::Dashboard => {
+                // QR Authentication Handshake for Dashboard
+                ui.draw_auth_panel();
+                let auth_init = match api_client.init_auth().await {
+                    Ok(init) => init,
+                    Err(e) => {
+                        ui.error(&format!("Failed to initiate authentication: {}", e));
+                        process::exit(1);
+                    }
+                };
+                ui.draw_qr_auth(&auth_init.verify_url);
+
+                println!(
+                    "\n  {} {}",
+                    style("➜").cyan(),
+                    style(i18n.t("help_qr_scan")).bold()
+                );
+                println!(
+                    "  {} {}\n",
+                    style("⚡").yellow(),
+                    style(&auth_init.verify_url).underlined().dim()
+                );
+
+                let session_id = auth_init.session_id.clone();
+                let auth_token = auth_init.auth_token.clone();
+
+                let mut verified = false;
+                let start_time = std::time::Instant::now();
+                let timeout = Duration::from_secs(300);
+
+                while !verified {
+                    if start_time.elapsed() > timeout {
+                        ui.error("Authentication timed out.");
+                        process::exit(1);
+                    }
+                    let status = match api_client.check_auth_status(&session_id, &auth_token).await
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            ui.error(&format!("Failed to check authentication status: {}", e));
+                            process::exit(1);
+                        }
+                    };
+                    if status == "VERIFIED" {
+                        verified = true;
+                    } else {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                }
+                ui.success("Authenticated successfully!");
+
                 let mut app = dashboard::DashboardApp::new(server_url.clone(), i18n);
                 if let Err(e) = app.run() {
                     eprintln!("Error running dashboard: {e}");
@@ -293,69 +344,9 @@ async fn main() {
         VersionStatus::UpToDate => {}
     }
 
-    // QR Authentication Handshake
-    ui.draw_auth_panel(); // Transitioning state
-
-    let auth_init = match api_client.init_auth().await {
-        Ok(init) => init,
-        Err(e) => {
-            ui.error(&format!("Failed to initiate authentication: {}", e));
-            process::exit(1);
-        }
-    };
-    ui.draw_qr_auth(&auth_init.verify_url);
-
-    println!(
-        "\n  {} {}",
-        style("➜").cyan(),
-        style(i18n.t("help_qr_scan")).bold()
-    );
-    println!(
-        "  {} {}\n",
-        style("⚡").yellow(),
-        style(&auth_init.verify_url).underlined().dim()
-    );
-
-    // Poll for verification
-    let session_id = auth_init.session_id.clone();
-    let auth_token = auth_init.auth_token.clone();
-
-    let mut verified = false;
-    let start_time = std::time::Instant::now();
-    let timeout = Duration::from_secs(300); // 5 mins
-
-    while !verified {
-        if start_time.elapsed() > timeout {
-            ui.error("Authentication timed out.");
-            process::exit(1);
-        }
-
-        let status = match api_client.check_auth_status(&session_id, &auth_token).await {
-            Ok(s) => s,
-            Err(e) => {
-                ui.error(&format!("Failed to check authentication status: {}", e));
-                process::exit(1);
-            }
-        };
-
-        if status == "VERIFIED" {
-            verified = true;
-        } else {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-    }
-
-    ui.success("Authenticated successfully!");
-
     let pb = ui.create_spinner(i18n.t("requesting_tunnel"));
     let tunnel_info = match api_client
-        .request_tunnel(
-            &device_id,
-            Some(port),
-            Some(protocol),
-            Some(session_id.clone()),
-            Some(auth_token.clone()),
-        )
+        .request_tunnel(&device_id, Some(port), Some(protocol), None, None)
         .await
     {
         Ok(info) => info,
@@ -768,39 +759,41 @@ mod tests {
 
     #[test]
     fn test_version_compatibility() {
-        // Standard cases
+        // Standard cases - Exact matches
         assert_eq!(
             check_version_compatibility("0.1.0", "0.1.0", "0.1.0"),
             VersionStatus::UpToDate
         );
         assert_eq!(
+            check_version_compatibility("0.10.0", "0.10.0", "0.10.0"),
+            VersionStatus::UpToDate
+        );
+
+        // Outdated cases
+        assert_eq!(
             check_version_compatibility("0.1.0", "0.2.0", "0.2.0"),
             VersionStatus::Outdated
         );
         assert_eq!(
-            check_version_compatibility("0.1.0", "0.1.0", "0.2.0"),
-            VersionStatus::UpdateAvailable
+            check_version_compatibility("0.4.9", "0.4.10", "0.4.10"),
+            VersionStatus::Outdated
         );
         assert_eq!(
-            check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
-            VersionStatus::UpToDate
+            check_version_compatibility("0.4.10", "0.4.11", "0.4.11"),
+            VersionStatus::Outdated
         );
 
-        // Multi-digit components
+        // Update available cases
         assert_eq!(
-            check_version_compatibility("0.4.11", "0.4.9", "0.4.10"),
-            VersionStatus::UpToDate
-        );
-        assert_eq!(
-            check_version_compatibility("0.4.9", "0.4.11", "0.4.11"),
-            VersionStatus::Outdated
+            check_version_compatibility("0.1.0", "0.1.0", "0.2.0"),
+            VersionStatus::UpdateAvailable
         );
         assert_eq!(
             check_version_compatibility("0.4.10", "0.4.9", "0.4.11"),
             VersionStatus::UpdateAvailable
         );
 
-        // 'v' prefix handling
+        // 'v' prefix handling (robustness)
         assert_eq!(
             check_version_compatibility("v0.4.11", "0.4.11", "0.4.11"),
             VersionStatus::UpToDate
@@ -810,17 +803,23 @@ mod tests {
             VersionStatus::UpToDate
         );
         assert_eq!(
-            check_version_compatibility("v0.4.9", "v0.4.11", "v0.4.11"),
+            check_version_compatibility("v0.4.11", "v0.4.11", "v0.4.11"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.4.9", "v0.4.10", "v0.4.10"),
             VersionStatus::Outdated
         );
 
-        // Edge cases
+        // Multi-digit components
         assert_eq!(
-            check_version_compatibility("0.2.0", "0.2.0", "0.3.0"),
-            VersionStatus::UpdateAvailable
+            check_version_compatibility("0.4.11", "0.4.9", "0.4.10"),
+            VersionStatus::UpToDate
         );
+
+        // Malformed versions (fallback to 0.0.0)
         assert_eq!(
-            check_version_compatibility("0.0.9", "0.1.0", "0.1.0"),
+            check_version_compatibility("invalid", "0.1.0", "0.1.0"),
             VersionStatus::Outdated
         );
     }
