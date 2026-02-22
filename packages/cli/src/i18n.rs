@@ -226,6 +226,11 @@ mod tests {
             "restarting_session",
             "cli_help",
             "ram_usage",
+            "up_to_date",
+            "updating",
+            "downloading_update",
+            "update_success",
+            "help_qr_scan",
         ];
 
         let langs = vec![Language::En, Language::Vi, Language::Zh];
@@ -241,5 +246,12 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_i18n_fallback() {
+        let i18n = I18n { lang: Language::Vi };
+        // Test a key that definitely exists in EN but maybe not in VI (though I added it)
+        assert_ne!(i18n.t("startup"), "startup");
     }
 }

@@ -384,4 +384,43 @@ mod tests {
         assert_eq!(stats.available, 7);
         mock.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_init_auth_success() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/auth/init")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"session_id": "s1", "auth_token": "tok1", "verify_url": "http://v"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let res = client.init_auth().await.unwrap();
+
+        assert_eq!(res.session_id, "s1");
+        assert_eq!(res.auth_token, "tok1");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_check_auth_status_success() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("GET", "/api/auth/check?s=s1&t=tok1")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "VERIFIED"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let status = client.check_auth_status("s1", "tok1").await.unwrap();
+
+        assert_eq!(status, "VERIFIED");
+        mock.assert_async().await;
+    }
 }

@@ -689,6 +689,7 @@ mod tests {
 
     #[test]
     fn test_version_compatibility() {
+        // Standard cases
         assert_eq!(
             check_version_compatibility("0.1.0", "0.1.0", "0.1.0"),
             VersionStatus::UpToDate
@@ -704,6 +705,16 @@ mod tests {
         assert_eq!(
             check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
             VersionStatus::UpToDate
+        );
+        
+        // Edge cases
+        assert_eq!(
+            check_version_compatibility("0.2.0", "0.2.0", "0.3.0"),
+            VersionStatus::UpdateAvailable
+        );
+        assert_eq!(
+            check_version_compatibility("0.0.9", "0.1.0", "0.1.0"),
+            VersionStatus::Outdated
         );
     }
 
