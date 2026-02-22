@@ -17,10 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
+    gcc-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
-# Install aarch64-linux-musl toolchain
-RUN curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xzC /usr/local --strip-components=1
+# Create symlink for the linker expected by Cargo
+RUN ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-musl-gcc
 
 # Pre-compile dependencies
 RUN rustup target add x86_64-unknown-linux-musl && \
@@ -40,13 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     musl-tools \
     build-essential \
     cmake \
+    gcc-aarch64-linux-gnu \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g wrangler@4 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install aarch64-linux-musl toolchain (again for dev stage)
-RUN curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xzC /usr/local --strip-components=1
+# Create symlink for the linker expected by Cargo (again for dev stage)
+RUN ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-musl-gcc
 
 # Setup Rust components, sccache, and worker-build in one step
 RUN rustup target add x86_64-unknown-linux-musl && \
