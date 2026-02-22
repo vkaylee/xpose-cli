@@ -55,8 +55,8 @@ struct DeviceRequest {
     device_id: String,
 }
 
-pub const MIN_CLI_VERSION: &str = "0.3.0";
-pub const RECOMMENDED_VERSION: &str = "0.3.0";
+pub const MIN_CLI_VERSION: &str = "0.4.7";
+pub const RECOMMENDED_VERSION: &str = "0.4.7";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 

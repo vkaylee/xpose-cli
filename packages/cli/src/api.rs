@@ -64,7 +64,10 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new(mut base_url: String) -> Self {
+        if base_url.ends_with('/') {
+            base_url.pop();
+        }
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -236,6 +239,15 @@ impl ApiClient {
 mod tests {
     use super::*;
     use mockito::Server;
+
+    #[tokio::test]
+    async fn test_url_sanitization() {
+        let client = ApiClient::new("https://example.com/".to_string());
+        assert_eq!(client.base_url, "https://example.com");
+
+        let client2 = ApiClient::new("https://example.com".to_string());
+        assert_eq!(client2.base_url, "https://example.com");
+    }
 
     #[tokio::test]
     async fn test_get_config_success() {
