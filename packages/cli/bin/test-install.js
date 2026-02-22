@@ -2,14 +2,13 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const tar = require('tar');
 const { getFileContent } = require('./install');
 
 // Setup temporary test environment
 const TEST_DIR = path.join(__dirname, '..', 'test_tmp');
 const BIN_DIR = path.join(TEST_DIR, 'bin');
 const DUMMY_BIN = 'xpose';
-const DUMMY_CONTENT = 'dummy binary content';
 const ARCHIVE_NAME = 'test-target.tar.gz';
 
 if (!fs.existsSync(BIN_DIR)) {
@@ -17,7 +16,7 @@ if (!fs.existsSync(BIN_DIR)) {
 }
 
 async function testExtraction() {
-    console.log('Running testExtraction...');
+    console.log('Running testExtraction (using tar package)...');
 
     const archivePath = path.join(BIN_DIR, ARCHIVE_NAME);
     const dummyBinPath = path.join(TEST_DIR, DUMMY_BIN);
@@ -29,14 +28,22 @@ async function testExtraction() {
         fs.writeFileSync(dummyBinPath, '#!/bin/sh\necho "xpose version 0.0.0-test"');
     }
 
-    // 2. Archive it
-    execSync(`tar -czf "${archivePath}" -C "${TEST_DIR}" "${DUMMY_BIN}"`);
+    // 2. Archive it using the 'tar' package (simulating CI build output)
+    await tar.c({
+        gzip: true,
+        file: archivePath,
+        cwd: TEST_DIR
+    }, [DUMMY_BIN]);
+
     fs.unlinkSync(dummyBinPath); // Remove original dummy
 
-    // 3. Run extraction logic (simulating the end of install.js download)
+    // 3. Run extraction logic using the 'tar' package (simulating install.js)
     console.log(`Extracting ${ARCHIVE_NAME}...`);
     try {
-        execSync(`tar -xzf "${archivePath}" -C "${BIN_DIR}"`);
+        await tar.x({
+            file: archivePath,
+            cwd: BIN_DIR
+        });
 
         const extractedPath = path.join(BIN_DIR, DUMMY_BIN);
         assert(fs.existsSync(extractedPath), 'Extracted binary should exist');
@@ -48,6 +55,7 @@ async function testExtraction() {
             assert((stats.mode & 0o777) === 0o755, 'Binary should have correct permissions');
 
             console.log('Testing binary execution...');
+            const { execSync } = require('child_process');
             const output = execSync(`"${extractedPath}"`).toString();
             assert(output.includes('xpose version'), 'Binary should be executable and return expected output');
             console.log('✅ Binary execution successful');

@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const tar = require('tar');
 
 /**
  * xpose binary downloader
@@ -153,15 +153,17 @@ async function download() {
 
         console.log(`Extracting binary...`);
         try {
-            // Unpack the tar.gz archive
-            // xpose-target.tar.gz usually contains 'xpose' or 'xpose.exe'
-            const isWin = os.platform() === 'win32';
-            const binName = isWin ? 'xpose.exe' : 'xpose';
-
-            execSync(`tar -xzf "${dest}" -C "${BIN_DIR}"`);
+            // Unpack the tar.gz archive using the 'tar' package
+            // This is cross-platform and doesn't require the system 'tar' command
+            await tar.x({
+                file: dest,
+                cwd: BIN_DIR
+            });
 
             // Ensure permissions on Unix
+            const isWin = os.platform() === 'win32';
             if (!isWin) {
+                const binName = isWin ? 'xpose.exe' : 'xpose';
                 const finalBinPath = path.join(BIN_DIR, binName);
                 fs.chmodSync(finalBinPath, 0o755);
             }
