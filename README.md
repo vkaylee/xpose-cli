@@ -7,6 +7,8 @@ A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels 
 
 `xpose` takes the pain out of exposing your local development servers to the internet. It automatically handles binary downloads, tunnel management, and provides a beautiful, hacker-style real-time dashboard.
 
+- **Development**: Docker-first workflow with unified local/CI parity. See [docs/DOCKER.md](docs/DOCKER.md).
+
 ---
 
 ## 🚀 Features

@@ -22,15 +22,23 @@ We welcome ideas for new features! Please open an issue to discuss your proposal
 
 ## Development Setup
 
-**CRITICAL**: All development, testing, and building must be performed inside the Docker environment. Do not run `cargo` or `npm` commands directly on your host machine.
+**CRITICAL**: All development, testing, and building must be performed inside the Docker environment to ensure platform parity and zero-defect deployments.
 
-See the [README.md](README.md) for detailed instructions on starting the Docker container using `docker-compose`.
+### 🐳 The Docker Utility
+We use `./run-in-docker.sh` as the primary entry point for all quality checks. See [docs/DOCKER.md](docs/DOCKER.md) for detailed technical info on our caching architecture.
+- **Linting**: `./run-in-docker.sh lint` (Format & Clippy).
+- **Testing**: `./run-in-docker.sh test` (Workspace tests).
+- **Verify All**: `./run-in-docker.sh all` (Runs both).
+
+### 🛡️ Quality Gates
+- **Pre-commit**: A Git hook is installed to automatically run `lint` before every commit.
+- **CI Parity**: The script is used directly in GitHub Actions with `NO_BUILD=true` to ensure that local and CI results are identical.
+- **Caching**: The system uses persistent volumes and `sccache` for near-instant incremental builds. Use `export TARGET_DIR=./target` if you want to share artifacts with the host (Linux only).
 
 ### Coding Standards
-- Enter the Docker container: `docker-compose exec dev bash`
-- Run `cargo fmt` inside the container before committing.
-- Ensure `cargo clippy` passes without warnings.
-- Keep the Terminal UI (TUI) clean and performant.
+- Always use the `./run-in-docker.sh` tool before claiming a task is done.
+- Follow the "Protocol-First" approach documented in `.ai-context-os/PROJECT_OS.md`.
+- Ensure all tests pass 100% before requesting a review.
 
 ## Legal
 By contributing, you agree that your contributions will be licensed under the project's MIT License.
