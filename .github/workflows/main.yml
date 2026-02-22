@@ -119,7 +119,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            TARGET_DIR=target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
+            TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
           else
             # For non-linux targets, use host toolchain (simplest for now)
             rustup target add ${{ matrix.target }}
