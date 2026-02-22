@@ -26,6 +26,7 @@ We leverage a hybrid approach to balance performance on different host platforms
   - **Why?**: Sharing `target/` via bind-mount is extremely slow on macOS/Windows (I/O overhead) and causes permission/compatibility issues across platforms. Named volumes run at native speed.
 - **CI (Host Path)**: In CI, we map this to a physical directory (`/tmp/target_cache`).
   - **Why?**: GitHub Actions jobs are ephemeral. Named volumes are lost between jobs. By using a physical path, we can persist it across jobs using `actions/cache@v4`.
+- **Permissions (CI)**: Since Docker runs as root, files in `/tmp` are root-owned. `run-in-docker.sh` automatically runs `chown -R` at the end of the script in CI mode to restore access to the host runner user.
 
 ### 3. Sccache (Compilation Cache)
 - **Tool**: `sccache` is enabled by default inside the container.

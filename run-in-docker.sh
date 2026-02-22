@@ -74,4 +74,11 @@ case "$COMMAND" in
         ;;
 esac
 
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+    echo "🧹 Correcting permissions for CI cache..."
+    # The container runs as root, but host needs access to files for caching
+    # We use a temporary container to fix permissions of the mounted volumes
+    docker compose run --rm --entrypoint chown dev -R $(id -u):$(id -g) /usr/local/cargo/registry /usr/local/cargo/git /workspace/target /workspace/.sccache
+fi
+
 echo "✨ Checks completed successfully in the Docker environment!"
