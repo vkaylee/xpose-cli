@@ -10,7 +10,8 @@ WORKDIR /workspace
 COPY --from=planner /workspace/recipe.json recipe.json
 
 # Install build dependencies once
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     musl-tools \
@@ -18,10 +19,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     curl \
     gcc-aarch64-linux-gnu \
+    musl-dev:arm64 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink for the linker expected by Cargo
-RUN ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-musl-gcc
+# Create a proper cross-compilation wrapper for musl
+RUN echo '#!/bin/sh\nexec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' > /usr/bin/aarch64-linux-musl-gcc && \
+    chmod +x /usr/bin/aarch64-linux-musl-gcc
 
 # Pre-compile dependencies
 RUN rustup target add x86_64-unknown-linux-musl && \
@@ -33,7 +36,8 @@ FROM rust:1.93.1-slim-bookworm AS dev
 WORKDIR /workspace
 
 # Combine system dependencies and Node.js installation into a single optimized layer
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     pkg-config \
@@ -42,13 +46,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     gcc-aarch64-linux-gnu \
+    musl-dev:arm64 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g wrangler@4 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink for the linker expected by Cargo (again for dev stage)
-RUN ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-musl-gcc
+# Create a proper cross-compilation wrapper for musl (again for dev stage)
+RUN echo '#!/bin/sh\nexec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' > /usr/bin/aarch64-linux-musl-gcc && \
+    chmod +x /usr/bin/aarch64-linux-musl-gcc
 
 # Setup Rust components, sccache, and worker-build in one step
 RUN rustup target add x86_64-unknown-linux-musl && \
