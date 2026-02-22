@@ -22,8 +22,12 @@ async function testExtraction() {
     const archivePath = path.join(BIN_DIR, ARCHIVE_NAME);
     const dummyBinPath = path.join(TEST_DIR, DUMMY_BIN);
 
-    // 1. Create a dummy binary
-    fs.writeFileSync(dummyBinPath, DUMMY_CONTENT);
+    // 1. Create a dummy binary (make it a shell script so it's executable on Unix)
+    if (process.platform === 'win32') {
+        fs.writeFileSync(dummyBinPath, 'echo dummy');
+    } else {
+        fs.writeFileSync(dummyBinPath, '#!/bin/sh\necho "xpose version 0.0.0-test"');
+    }
 
     // 2. Archive it
     execSync(`tar -czf "${archivePath}" -C "${TEST_DIR}" "${DUMMY_BIN}"`);
@@ -37,13 +41,16 @@ async function testExtraction() {
         const extractedPath = path.join(BIN_DIR, DUMMY_BIN);
         assert(fs.existsSync(extractedPath), 'Extracted binary should exist');
 
-        const content = fs.readFileSync(extractedPath, 'utf8');
-        assert.strictEqual(content, DUMMY_CONTENT, 'Extracted content should match');
-
+        // Ensure permissions on Unix and test execution
         if (process.platform !== 'win32') {
             fs.chmodSync(extractedPath, 0o755);
             const stats = fs.statSync(extractedPath);
             assert((stats.mode & 0o777) === 0o755, 'Binary should have correct permissions');
+
+            console.log('Testing binary execution...');
+            const output = execSync(`"${extractedPath}"`).toString();
+            assert(output.includes('xpose version'), 'Binary should be executable and return expected output');
+            console.log('✅ Binary execution successful');
         }
 
         console.log('✅ testExtraction passed');
