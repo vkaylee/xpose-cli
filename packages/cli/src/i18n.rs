@@ -84,6 +84,10 @@ impl I18n {
             "requesting_tunnel" => "Requesting tunnel from pool...",
             "running_background" => "cloudflared is running in background. Tunnel token hidden for security.",
             "help_qr_scan" => "Scan the QR code above or open the link to authorize this connection.",
+            "up_to_date" => "xpose CLI is already up to date!",
+            "updating" => "Updating xpose CLI",
+            "downloading_update" => "Downloading update from GitHub...",
+            "update_success" => "Successfully updated to version",
             _ => key,
         }
     }
@@ -121,6 +125,10 @@ impl I18n {
             "requesting_tunnel" => "Đang yêu cầu tunnel từ pool...",
             "running_background" => "cloudflared đang chạy ngầm. Token tunnel được ẩn để bảo mật.",
             "help_qr_scan" => "Quét mã QR ở trên hoặc mở liên kết để xác thực kết nối này.",
+            "up_to_date" => "xpose CLI đã là phiên bản mới nhất!",
+            "updating" => "Đang cập nhật xpose CLI",
+            "downloading_update" => "Đang tải bản cập nhật từ GitHub...",
+            "update_success" => "Cập nhật thành công lên phiên bản",
             _ => self.get_en(key),
         }
     }
@@ -159,7 +167,11 @@ impl I18n {
             }
             "requesting_tunnel" => "正在从池中请求隧道...",
             "running_background" => "cloudflared 正在后台运行。为了安全，隧道令牌已隐藏。",
-            "help_qr_scan" => "扫描上方二维码或点击链接以授权此连接。",
+            "help_qr_scan" => "扫描二维码或打开链接以授权此连接。",
+            "up_to_date" => "xpose CLI 已经是最新版本！",
+            "updating" => "正在更新 xpose CLI",
+            "downloading_update" => "正在从 GitHub 下载更新...",
+            "update_success" => "成功更新至版本",
             _ => self.get_en(key),
         }
     }

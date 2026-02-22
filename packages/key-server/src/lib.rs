@@ -56,6 +56,11 @@ struct RequestTunnelRequest {
     auth_token: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct DeviceRequest {
+    device_id: String,
+}
+
 pub const MIN_CLI_VERSION: &str = "0.1.0";
 pub const RECOMMENDED_VERSION: &str = "0.1.0";
 

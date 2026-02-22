@@ -19,7 +19,11 @@ tempfile = "3.25.0"
 tokio = { workspace = true }
 tokio-util = "0.7.18"
 zip = { workspace = true }
+serde_yaml = "0.9"
+uuid = { version = "1.10", features = ["v4"] }
+dirs = "5.0.1"
 qrcode = "0.14.0"
+opener = "0.7"
 arboard = "3.4.1"
 log = "0.4.26"
 fern = "0.7.1"

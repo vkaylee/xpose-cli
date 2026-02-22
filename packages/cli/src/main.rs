@@ -1,9 +1,12 @@
 mod api;
 mod cloudflared;
+mod config;
 mod dashboard;
 mod i18n;
 mod registry;
 mod ui;
+
+use config::XposeConfig;
 
 use clap::{
     builder::styling::{AnsiColor, Effects, Styles},
@@ -11,7 +14,9 @@ use clap::{
 };
 use dotenvy::dotenv;
 use std::env;
+use std::fs;
 use std::process;
+use uuid::Uuid;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 use console::style;
@@ -52,12 +57,23 @@ struct Args {
 
     #[arg(long, help = "Override language (en, vi, zh)")]
     lang: Option<String>,
+
+    #[arg(long, help = "Key server URL to use")]
+    server_url: Option<String>,
+
+    #[arg(long, help = "Auto-open browser after connecting")]
+    open: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Commands {
     #[command(about = "Open local management dashboard")]
     Dashboard,
+    #[command(about = "Check and install CLI updates")]
+    Update {
+        #[arg(long, help = "Force update even if up to date")]
+        force: bool,
+    },
 }
 
 pub fn map_error(e: &str) -> String {
@@ -170,26 +186,54 @@ async fn send_telemetry(api: &ApiClient, event: &str, device_id: &str, details: 
 async fn main() {
     let _ = dotenv();
     setup_logging().expect("Failed to initialize logging");
-    info!("Starting xpose CLI v{}", env!("CARGO_PKG_VERSION"));
+    
+    // Load config from xpose.yaml
+    let yaml_config = XposeConfig::load();
 
     let args = Args::parse();
-    let i18n = i18n::I18n::new(args.lang.clone());
+    
+    // Merge i18n: Args > YAML > Auto-detect
+    let lang = args.lang.clone().or(yaml_config.lang.clone());
+    let i18n = i18n::I18n::new(lang);
+    let ui = Ui::new(i18n.clone());
+    
     let registry = registry::Registry::new();
 
-    if let Some(Commands::Dashboard) = args.command {
-        let mut app = dashboard::DashboardApp::new(KEY_SERVER_URL.to_string(), i18n);
-        if let Err(e) = app.run() {
-            eprintln!("Error running dashboard: {e}");
+    if let Some(command) = args.command {
+        let server_url = args.server_url.clone()
+            .or(yaml_config.server_url.clone())
+            .unwrap_or_else(|| KEY_SERVER_URL.to_string());
+
+        let api_client = ApiClient::new(server_url.clone());
+
+        match command {
+            Commands::Dashboard => {
+                let mut app = dashboard::DashboardApp::new(server_url, i18n);
+                if let Err(e) = app.run() {
+                    eprintln!("Error running dashboard: {e}");
+                }
+                process::exit(0);
+            }
+            Commands::Update { force } => {
+                handle_update(&api_client, &ui, &i18n, force).await;
+                process::exit(0);
+            }
         }
-        process::exit(0);
     }
 
-    let ui = Ui::new(i18n.clone());
     info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
 
+    // Merge Port & Protocol: Args > YAML > Env
     let port = args
         .port
+        .or(yaml_config.port)
         .or_else(|| env::var("MT_TUNNEL_PORT").ok().and_then(|p| p.parse().ok()));
+
+    let protocol = if args.udp || yaml_config.protocol.as_deref() == Some("udp") {
+        "udp"
+    } else {
+        "tcp"
+    };
 
     let port = match port {
         Some(p) => p,
@@ -199,7 +243,7 @@ async fn main() {
             for &p in &[3000, 8000, 8080] {
                 if std::net::TcpStream::connect_timeout(
                     &format!("127.0.0.1:{p}").parse().unwrap(),
-                    Duration::from_millis(150),
+                    Duration::from_millis(100),
                 )
                 .is_ok()
                 {
@@ -210,40 +254,29 @@ async fn main() {
 
             match found_port {
                 Some(p) => {
-                    ui.success(&i18n.t("found_service").replace("{}", &p.to_string()));
+                    ui.success(&format!("{} {}", i18n.t("found_service"), p));
                     p
                 }
                 None => {
                     ui.error(i18n.t("no_port_found"));
-                    println!("Usage: xpose <PORT>\nExample: xpose 3000");
                     process::exit(1);
                 }
             }
         }
     };
 
-    let protocol = if args.udp { "udp" } else { "tcp" };
-    let device_id = format!(
-        "device_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let device_id = match get_machine_id() {
+        Ok(id) => id,
+        Err(_) => "unknown-device".to_string(),
+    };
 
-    let api_client = ApiClient::new(KEY_SERVER_URL.to_string());
+    let server_url = args.server_url.clone()
+        .or(yaml_config.server_url.clone())
+        .unwrap_or_else(|| KEY_SERVER_URL.to_string());
+
+    let api_client = ApiClient::new(server_url.clone());
+
     let cf_config = CloudflaredConfig::new();
-
-    send_telemetry(
-        &api_client,
-        "start",
-        &device_id,
-        serde_json::json!({"port": port, "protocol": protocol}),
-    )
-    .await;
-
-    ui.info(i18n.t("checking_env"));
-
     if !cf_config.is_installed() {
         let pb = ui.create_spinner(i18n.t("downloading_binary"));
         if let Err(e) = cf_config.download().await {
@@ -387,6 +420,24 @@ async fn main() {
     sleep(Duration::from_millis(1500)).await;
 
     ui.draw_connected_panel(port, &public_url, protocol);
+
+    // Hook: on_connect
+    let mut hook_executed = false;
+    if let Some(hook) = yaml_config.hooks.and_then(|h| h.on_connect) {
+        let cmd = hook.replace("{}", &public_url);
+        info!("Executing on_connect hook: {}", cmd);
+        let _ = if cfg!(target_os = "windows") {
+            process::Command::new("cmd").args(["/C", &cmd]).spawn()
+        } else {
+            process::Command::new("sh").args(["-c", &cmd]).spawn()
+        };
+        hook_executed = true;
+    }
+
+    if args.open && !hook_executed {
+        let _ = opener::open(&public_url);
+    }
+
     ui.info(i18n.t("running_background"));
 
     let _ = registry.register(registry::TunnelEntry {
@@ -399,7 +450,7 @@ async fn main() {
     });
 
     let heartbeat_device = device_id.clone();
-    let heartbeat_api = ApiClient::new(KEY_SERVER_URL.to_string());
+    let heartbeat_api = ApiClient::new(server_url.clone());
     let metrics_url = format!("http://localhost:{metrics_port}/metrics");
     let metrics_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -415,7 +466,7 @@ async fn main() {
     let health_url = format!("http://localhost:{port}");
     let ui_health_clone = ui_ref.clone();
 
-    let telemetry_api = ApiClient::new(KEY_SERVER_URL.to_string());
+    let telemetry_api = ApiClient::new(server_url.clone());
     let telemetry_device = device_id.clone();
 
     let handle = tokio::spawn(async move {
@@ -557,4 +608,124 @@ fn setup_logging() -> Result<(), fern::InitError> {
         .apply()?;
 
     Ok(())
+}
+
+fn get_machine_id() -> Result<String, Box<dyn std::error::Error>> {
+    let path = dirs::home_dir()
+        .ok_or("Could not find home directory")?
+        .join(".xpose")
+        .join("device_id");
+
+    if path.exists() {
+        return Ok(fs::read_to_string(path)?.trim().to_string());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, &id)?;
+    Ok(id)
+}
+
+async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool) {
+    let config = match api.get_config().await {
+        Ok(c) => c,
+        Err(e) => {
+            ui.error(&format!("Failed to fetch update info: {}", e));
+            return;
+        }
+    };
+
+    let current = env!("CARGO_PKG_VERSION");
+    let status = check_version_compatibility(current, &config.min_cli_version, &config.recommended_version);
+
+    if !force && status == VersionStatus::UpToDate {
+        ui.success(i18n.t("up_to_date"));
+        return;
+    }
+
+    ui.info(&format!("{} v{}...", i18n.t("updating"), config.recommended_version));
+
+    let os = env::consts::OS;
+    let arch = env::consts::ARCH;
+    let release_name = match (os, arch) {
+        ("linux", "x86_64") => "xpose-linux-amd64",
+        ("macos", "x86_64") => "xpose-darwin-amd64",
+        ("macos", "aarch64") => "xpose-darwin-arm64",
+        ("windows", "x86_64") => "xpose-windows-amd64.exe",
+        _ => {
+            ui.error("Unsupported platform for self-update");
+            return;
+        }
+    };
+
+    let url = format!(
+        "https://github.com/vkaylee/xpose-cli/releases/download/v{}/{}",
+        config.recommended_version, release_name
+    );
+
+    let pb = ui.create_spinner(i18n.t("downloading_update"));
+    let client = reqwest::Client::new();
+    let res = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            pb.finish_and_clear();
+            ui.error(&format!("Download failed: {e}"));
+            return;
+        }
+    };
+
+    if !res.status().is_success() {
+        pb.finish_and_clear();
+        ui.error(&format!("Server returned error: {}", res.status()));
+        return;
+    }
+
+    let bytes = match res.bytes().await {
+        Ok(b) => b.to_vec(),
+        Err(e) => {
+            pb.finish_and_clear();
+            ui.error(&format!("Failed to read response body: {e}"));
+            return;
+        }
+    };
+
+    let current_exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            pb.finish_and_clear();
+            ui.error(&format!("Could not determine current executable path: {e}"));
+            return;
+        }
+    };
+
+    let mut temp_exe = current_exe.clone();
+    temp_exe.set_extension("tmp");
+
+    if let Err(e) = fs::write(&temp_exe, &bytes) {
+        pb.finish_and_clear();
+        ui.error(&format!("Failed to write temporary file: {e}"));
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&temp_exe) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&temp_exe, perms);
+        }
+    }
+
+    if let Err(e) = fs::rename(&temp_exe, &current_exe) {
+        pb.finish_and_clear();
+        ui.error(&format!("Failed to replace binary: {e}. Try running with sudo/admin."));
+        let _ = fs::remove_file(&temp_exe);
+        return;
+    }
+
+    pb.finish_and_clear();
+    ui.success(&format!("{} v{}", i18n.t("update_success"), config.recommended_version));
 }

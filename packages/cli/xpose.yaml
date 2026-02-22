@@ -1,0 +1,4 @@
+lang: vi
+port: 3333
+hooks:
+  on_connect: "echo 'Connected to {}' > /tmp/xpose_hook_test.txt"
