@@ -243,10 +243,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Debug NPM
-        working-directory: packages/cli
-        run: bash ${{ github.workspace }}/.github/scripts/debug-npm.sh
-
       - name: Publish to NPM
         working-directory: packages/cli
-        run: npm publish --access public --provenance
+        run: npm publish --access public
