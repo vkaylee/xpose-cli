@@ -12,6 +12,7 @@ services:
     environment:
       - MT_TUNNEL_PORT=3000
       - SCCACHE_DIR=/workspace/.sccache
+      - CLOUDFLARE_API_TOKEN
     stdin_open: true
     tty: true
 
