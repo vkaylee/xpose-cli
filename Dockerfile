@@ -62,7 +62,8 @@ RUN rustup target add x86_64-unknown-linux-musl && \
     rustup target add wasm32-unknown-unknown && \
     rustup component add rustfmt clippy && \
     cargo install --locked sccache --version ^0.8 && \
-    cargo install --locked worker-build
+    cargo install --locked worker-build && \
+    cargo install --locked cargo-tarpaulin
 
 # Configure sccache
 ENV RUSTC_WRAPPER=sccache
