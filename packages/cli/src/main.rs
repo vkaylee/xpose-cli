@@ -114,9 +114,19 @@ enum VersionStatus {
 }
 
 fn check_version_compatibility(current: &str, min: &str, recommended: &str) -> VersionStatus {
-    if min > current {
+    fn trim_v(s: &str) -> &str {
+        s.trim_start_matches('v').trim()
+    }
+    let current_v =
+        semver::Version::parse(trim_v(current)).unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let min_v =
+        semver::Version::parse(trim_v(min)).unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let recommended_v = semver::Version::parse(trim_v(recommended))
+        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+
+    if current_v < min_v {
         VersionStatus::Outdated
-    } else if recommended > current {
+    } else if current_v < recommended_v {
         VersionStatus::UpdateAvailable
     } else {
         VersionStatus::UpToDate
@@ -161,7 +171,7 @@ async fn main() {
 
         match command {
             Commands::Dashboard => {
-                let mut app = dashboard::DashboardApp::new(server_url, i18n);
+                let mut app = dashboard::DashboardApp::new(server_url.clone(), i18n);
                 if let Err(e) = app.run() {
                     eprintln!("Error running dashboard: {e}");
                 }
@@ -774,6 +784,34 @@ mod tests {
         assert_eq!(
             check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
             VersionStatus::UpToDate
+        );
+
+        // Multi-digit components
+        assert_eq!(
+            check_version_compatibility("0.4.11", "0.4.9", "0.4.10"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.4.9", "0.4.11", "0.4.11"),
+            VersionStatus::Outdated
+        );
+        assert_eq!(
+            check_version_compatibility("0.4.10", "0.4.9", "0.4.11"),
+            VersionStatus::UpdateAvailable
+        );
+
+        // 'v' prefix handling
+        assert_eq!(
+            check_version_compatibility("v0.4.11", "0.4.11", "0.4.11"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.4.11", "v0.4.11", "v0.4.11"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("v0.4.9", "v0.4.11", "v0.4.11"),
+            VersionStatus::Outdated
         );
 
         // Edge cases

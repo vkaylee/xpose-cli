@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, GlobalStats};
+use crate::api::GlobalStats;
 use crate::i18n::I18n;
 use crate::registry::{Registry, TunnelEntry};
 use crossterm::{
@@ -35,11 +35,11 @@ pub struct DashboardApp {
     table_state: TableState,
     should_quit: bool,
     metrics_client: reqwest::blocking::Client,
-    api_client: ApiClient,
     tick_count: u64,
     i18n: I18n,
     sys: sysinfo::System,
     pid: sysinfo::Pid,
+    api_url: String,
 }
 
 impl DashboardApp {
@@ -64,11 +64,11 @@ impl DashboardApp {
                 .timeout(Duration::from_millis(200))
                 .build()
                 .unwrap(),
-            api_client: ApiClient::new(api_url),
             tick_count: 0,
             i18n,
             sys,
             pid,
+            api_url,
         }
     }
 
@@ -138,10 +138,11 @@ impl DashboardApp {
 
         // Fetch global stats every 10 ticks (approx every 5s if tick_rate is 500ms)
         if self.tick_count.is_multiple_of(10) {
-            if let Ok(stats) =
-                tokio::runtime::Handle::current().block_on(self.api_client.get_global_stats())
-            {
-                self.global_stats = stats;
+            let url = format!("{}/api/stats", self.api_url);
+            if let Ok(res) = self.metrics_client.get(&url).send() {
+                if let Ok(stats) = res.json::<GlobalStats>() {
+                    self.global_stats = stats;
+                }
             }
         }
         self.tick_count = self.tick_count.wrapping_add(1);

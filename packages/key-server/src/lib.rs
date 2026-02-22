@@ -55,8 +55,8 @@ struct DeviceRequest {
     device_id: String,
 }
 
-pub const MIN_CLI_VERSION: &str = "0.4.7";
-pub const RECOMMENDED_VERSION: &str = "0.4.7";
+pub const MIN_CLI_VERSION: &str = "0.4.11";
+pub const RECOMMENDED_VERSION: &str = "0.4.11";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
@@ -79,6 +79,14 @@ fn is_safe_name(name: &str) -> bool {
         }
     }
     true
+}
+
+fn json_error(msg: impl Into<String>, status: u16) -> Result<Response> {
+    Response::from_json(&serde_json::json!({
+        "success": false,
+        "error": msg.into()
+    }))
+    .map(|res| res.with_status(status))
 }
 
 async fn check_rate_limit(db: &D1Database, ip: &str) -> Result<bool> {
@@ -140,14 +148,14 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             let token = auth_header.replace("Bearer ", "");
 
             if token != admin_secret {
-                return Response::error("Unauthorized", 401);
+                return json_error("Unauthorized", 401);
             }
 
             let body: AddTunnelRequest = req.json().await?;
 
             // Keyword filtering for admin too
             if !is_safe_name(&body.name) {
-                return Response::error("Prohibited keyword in tunnel name", 400);
+                return json_error("Prohibited keyword in tunnel name", 400);
             }
 
             let db = ctx.env.d1("DB")?;
@@ -158,7 +166,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             match result {
                 Ok(_) => Response::from_json(&serde_json::json!({"success": true, "message": "Tunnel added"})),
-                Err(e) => Response::error(format!("Database error: {e}"), 500),
+                Err(e) => json_error(format!("Database error: {e}"), 500),
             }
         })
         .post_async("/api/auth/init", |req, ctx| async move {
@@ -193,7 +201,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             match session {
                 Some(s) => Response::from_json(&serde_json::json!({ "status": s.status })),
-                None => Response::error("Session not found", 404),
+                None => json_error("Session not found", 404),
             }
         })
         .get_async("/api/auth/verify", |req, _| async move {
@@ -273,7 +281,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             let db = ctx.env.d1("DB")?;
 
             if !check_rate_limit(&db, &ip).await? {
-                return Response::error("Too many requests. Please wait a minute.", 429);
+                return json_error("Too many requests. Please wait a minute.", 429);
             }
 
             let body: RequestTunnelRequest = req.json().await?;
@@ -286,7 +294,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                     .await?;
 
                 if session.is_none() {
-                    return Response::error("Session not verified or invalid", 401);
+                    return json_error("Session not verified or invalid", 401);
                 }
 
                 // Mark session as USED
@@ -295,13 +303,13 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                     .run()
                     .await?;
             } else {
-                return Response::error("Authentication token required", 401);
+                return json_error("Authentication token required", 401);
             }
 
             // Port restriction
             if let Some(p) = body.port {
                 if !ALLOWED_PORTS.contains(&p) {
-                    return Response::error(format!("Port {p} is restricted for security reasons."), 403);
+                    return json_error(format!("Port {p} is restricted for security reasons."), 403);
                 }
             }
 
@@ -358,10 +366,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                             "tunnel": { "id": t.id, "name": t.name, "token": t.token }
                         }))
                     } else {
-                        Response::error("Collision, please retry", 409)
+                        json_error("Collision, please retry", 409)
                     }
                 }
-                None => Response::error("No tunnels available", 503)
+                None => json_error("No tunnels available", 503)
             }
         })
         .post_async("/api/heartbeat", |mut req, ctx| async move {
@@ -378,7 +386,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             if changes > 0 {
                 Response::from_json(&serde_json::json!({"success": true, "timestamp": now}))
             } else {
-                Response::error("No active session", 404)
+                json_error("No active session", 404)
             }
         })
         .post_async("/api/release", |mut req, ctx| async move {
@@ -493,7 +501,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(MIN_CLI_VERSION, "0.4.7");
+        assert_eq!(MIN_CLI_VERSION, "0.4.11");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 }

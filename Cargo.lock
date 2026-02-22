@@ -3794,7 +3794,7 @@ dependencies = [
 
 [[package]]
 name = "xpose"
-version = "0.4.10"
+version = "0.4.11"
 dependencies = [
  "arboard",
  "chrono",
@@ -3812,6 +3812,7 @@ dependencies = [
  "qrcode",
  "ratatui",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

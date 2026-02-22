@@ -126,17 +126,31 @@ impl Ui {
 
     fn draw_qr(&self, data: &str, label: &str) {
         if let Ok(code) = QrCode::new(data) {
-            let string = code
-                .render::<char>()
-                .quiet_zone(false)
-                .dark_color('█')
-                .light_color(' ')
-                .build();
+            let width = code.width();
             let _ = self
                 .term
                 .write_line(&format!("  {} {}", style("▶").cyan(), label));
-            for line in string.lines() {
-                let _ = self.term.write_line(&format!("  {line}"));
+
+            // Use Unicode 1/2 blocks for square pixels in terminal
+            // Each character represents 2 vertical modules
+            for y in (0..width).step_by(2) {
+                let mut line = String::from("  ");
+                for x in 0..width {
+                    let top = code[(x, y)] == qrcode::Color::Dark;
+                    let bottom = if y + 1 < width {
+                        code[(x, y + 1)] == qrcode::Color::Dark
+                    } else {
+                        false
+                    };
+
+                    match (top, bottom) {
+                        (true, true) => line.push('█'),
+                        (true, false) => line.push('▀'),
+                        (false, true) => line.push('▄'),
+                        (false, false) => line.push(' '),
+                    }
+                }
+                let _ = self.term.write_line(&line);
             }
         }
     }

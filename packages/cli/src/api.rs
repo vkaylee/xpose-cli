@@ -116,7 +116,17 @@ impl ApiClient {
             .await
             .map_err(|e| e.to_string())?;
         let status = res.status();
-        let data: ApiResponse = res.json().await.map_err(|e| e.to_string())?;
+        let text = res.text().await.map_err(|e| e.to_string())?;
+
+        let data: ApiResponse = match serde_json::from_str(&text) {
+            Ok(d) => d,
+            Err(_) => {
+                if !status.is_success() {
+                    return Err(text);
+                }
+                return Err("Failed to parse server response".to_string());
+            }
+        };
 
         if status.is_success() {
             if let Some(tunnel) = data.tunnel {
@@ -170,22 +180,6 @@ impl ApiClient {
             Ok(())
         } else {
             Err("Failed to release tunnel".to_string())
-        }
-    }
-
-    pub async fn get_global_stats(&self) -> Result<GlobalStats, String> {
-        let url = format!("{}/api/stats", self.base_url);
-        let res = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if res.status().is_success() {
-            let data: GlobalStats = res.json().await.map_err(|e| e.to_string())?;
-            Ok(data)
-        } else {
-            Err("Failed to fetch global stats".to_string())
         }
     }
 
@@ -374,27 +368,6 @@ mod tests {
         let res = client.request_tunnel("dev1", None, None, None, None).await;
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), "Custom error message");
-    }
-
-    #[tokio::test]
-    async fn test_get_global_stats_success() {
-        let mut server = Server::new_async().await;
-        let url = server.url();
-        let mock = server
-            .mock("GET", "/api/stats")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"total": 10, "busy": 3, "available": 7}"#)
-            .create_async()
-            .await;
-
-        let client = ApiClient::new(url);
-        let stats = client.get_global_stats().await.unwrap();
-
-        assert_eq!(stats.total, 10);
-        assert_eq!(stats.busy, 3);
-        assert_eq!(stats.available, 7);
-        mock.assert_async().await;
     }
 
     #[tokio::test]
