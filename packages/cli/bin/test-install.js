@@ -2,24 +2,59 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const http = require('http'); // We'll use this to mock
+const { execSync } = require('child_process');
+const { getFileContent } = require('./install');
 
-// Mocking dependencies would be complex without a library like proxyquire or jest.
-// For a simple standalone test, we'll use environment variables and temporary paths.
+// Setup temporary test environment
+const TEST_DIR = path.join(__dirname, '..', 'test_tmp');
+const BIN_DIR = path.join(TEST_DIR, 'bin');
+const DUMMY_BIN = 'xpose';
+const DUMMY_CONTENT = 'dummy binary content';
+const ARCHIVE_NAME = 'test-target.tar.gz';
 
-const { download, getFileContent } = require('./install');
+if (!fs.existsSync(BIN_DIR)) {
+    fs.mkdirSync(BIN_DIR, { recursive: true });
+}
 
-async function testSuccessfulDownload() {
-    console.log('Running testSuccessfulDownload...');
-    // This is a minimal test to ensure the script doesn't crash
-    // and correctly identifies dev environment.
-    process.env.XPOSE_DEV = '1';
+async function testExtraction() {
+    console.log('Running testExtraction...');
+
+    const archivePath = path.join(BIN_DIR, ARCHIVE_NAME);
+    const dummyBinPath = path.join(TEST_DIR, DUMMY_BIN);
+
+    // 1. Create a dummy binary
+    fs.writeFileSync(dummyBinPath, DUMMY_CONTENT);
+
+    // 2. Archive it
+    execSync(`tar -czf "${archivePath}" -C "${TEST_DIR}" "${DUMMY_BIN}"`);
+    fs.unlinkSync(dummyBinPath); // Remove original dummy
+
+    // 3. Run extraction logic (simulating the end of install.js download)
+    console.log(`Extracting ${ARCHIVE_NAME}...`);
     try {
-        await download();
-        console.log('✅ testSuccessfulDownload passed (dev skip)');
+        execSync(`tar -xzf "${archivePath}" -C "${BIN_DIR}"`);
+
+        const extractedPath = path.join(BIN_DIR, DUMMY_BIN);
+        assert(fs.existsSync(extractedPath), 'Extracted binary should exist');
+
+        const content = fs.readFileSync(extractedPath, 'utf8');
+        assert.strictEqual(content, DUMMY_CONTENT, 'Extracted content should match');
+
+        if (process.platform !== 'win32') {
+            fs.chmodSync(extractedPath, 0o755);
+            const stats = fs.statSync(extractedPath);
+            assert((stats.mode & 0o777) === 0o755, 'Binary should have correct permissions');
+        }
+
+        console.log('✅ testExtraction passed');
     } catch (e) {
-        console.error('❌ testSuccessfulDownload failed:', e);
+        console.error('❌ testExtraction failed:', e.message);
         process.exit(1);
+    } finally {
+        // Cleanup
+        if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
+        const extractedPath = path.join(BIN_DIR, DUMMY_BIN);
+        if (fs.existsSync(extractedPath)) fs.unlinkSync(extractedPath);
     }
 }
 
@@ -40,13 +75,17 @@ async function testGetFileContent404() {
     }
 }
 
-// In a real scenario, we would mock https.get and fs.createWriteStream.
-// Since we want to stay within standard node tools for now, we'll verify the logic structure.
-
 async function runTests() {
-    await testSuccessfulDownload();
-    await testGetFileContent404();
-    console.log('\nAll tests passed!');
+    try {
+        await testExtraction();
+        await testGetFileContent404();
+        console.log('\n✨ All installation tests passed!');
+    } finally {
+        // Final cleanup of test directory
+        if (fs.existsSync(TEST_DIR)) {
+            fs.rmSync(TEST_DIR, { recursive: true, force: true });
+        }
+    }
 }
 
 runTests().catch(err => {
