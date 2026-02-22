@@ -48,7 +48,8 @@ Before writing any code, every AI agent must:
 2.  **Check L1**: Verify tool-specific rules (e.g., `docker-helper.sh` usage).
 3.  **Audit**: Run `npx ai-context-os audit` (or local `bin/audit.js`) to ensure the current state is compliant before and after execution.
 4.  **Execute**: Perform the task strictly within the defined boundaries.
-5.  **Autonomous Enforcement**: AI agents are mandated to be proactive. Verification, auditing, and documentation sync must be performed autonomously without waiting for user prompts.
+5.  **Docker Verification**: Before finalizing any task or committing code, AI Agents MUST run `./run-in-docker.sh lint` (and `test` for significant logic changes) to ensure environment parity and quality compliance.
+6.  **Autonomous Enforcement**: AI agents are mandated to be proactive. Verification, auditing, and documentation sync must be performed autonomously without waiting for user prompts.
 
 ### 3.2 File & Code Standards
 - **Modularity**: Files must not exceed **200 lines**. Refactor immediately if they do.
@@ -71,7 +72,7 @@ The AI Context OS is a living system. AI Agents are granted "Legislative Rights"
 - **Execution**: The `recursive-evolution.md` skill acts as the blueprint for self-healing and capability expansion.
 
 ### 3.5 Testing & Documentation
-- **Testing**: No code is committed without passing tests. If skipping new tests, a clear justification must be provided. Every change requires a full execution of the project's regression suite to ensure zero regressions. **Diamond Requirement**: Combined test coverage must exceed **90%**.
+- **Testing**: No code is committed without passing tests. Every change requires a full execution of the project's regression suite via `./run-in-docker.sh all` to ensure zero regressions. **Diamond Requirement**: Combined test coverage must exceed **90%**.
 - **Documentation**: All architectural and logic changes must be documented immediately. No documentation drift is permitted.
 
 ### 3.6 Engineering Benchmarks
