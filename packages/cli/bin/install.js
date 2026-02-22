@@ -11,8 +11,14 @@ const crypto = require('crypto');
  * Fetches the pre-compiled Rust binary for the current platform.
  */
 
-const VERSION = '0.1.0';
-const REPO = 'user/xpose-cli'; // Placeholder
+function getPackageVersion() {
+    const packageJsonPath = path.join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    return pkg.version;
+}
+
+const VERSION = getPackageVersion();
+const REPO = 'vkaylee/xpose-cli';
 const BASE_URL = `https://github.com/${REPO}/releases/download/v${VERSION}`;
 
 const BIN_DIR = path.join(os.homedir(), '.xpose', 'bin');
