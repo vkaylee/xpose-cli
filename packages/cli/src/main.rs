@@ -28,7 +28,10 @@ use log::{info, LevelFilter};
 use std::sync::{Arc, Mutex};
 use ui::Ui;
 
-const KEY_SERVER_URL: &str = "http://127.0.0.1:8787";
+const KEY_SERVER_URL: &str = match option_env!("XPOSE_SERVER_URL") {
+    Some(url) => url,
+    None => "http://127.0.0.1:8787",
+};
 
 fn cli_styles() -> Styles {
     Styles::styled()
@@ -74,6 +77,19 @@ enum Commands {
         #[arg(long, help = "Force update even if up to date")]
         force: bool,
     },
+    #[command(about = "Configure xpose settings")]
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum ConfigAction {
+    #[command(about = "Set a configuration value")]
+    Set { key: String, value: String },
+    #[command(about = "Get a configuration value")]
+    Get { key: String },
 }
 
 pub fn map_error(e: &str) -> String {
@@ -153,6 +169,10 @@ async fn main() {
             }
             Commands::Update { force } => {
                 handle_update(&api_client, &ui, &i18n, force).await;
+                process::exit(0);
+            }
+            Commands::Config { action } => {
+                handle_config(action, yaml_config, &ui, &i18n).await;
                 process::exit(0);
             }
         }
@@ -686,6 +706,50 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
         i18n.t("update_success"),
         config.recommended_version
     ));
+}
+
+async fn handle_config(
+    action: ConfigAction,
+    mut config: XposeConfig,
+    ui: &ui::Ui,
+    i18n: &i18n::I18n,
+) {
+    match action {
+        ConfigAction::Set { key, value } => {
+            match key.as_str() {
+                "server_url" => config.server_url = Some(value.clone()),
+                "lang" => config.lang = Some(value.clone()),
+                "port" => config.port = value.parse().ok(),
+                "protocol" => config.protocol = Some(value.clone()),
+                _ => {
+                    ui.error(&i18n.t("config_error").replace("{}", &key));
+                    return;
+                }
+            }
+            if let Err(e) = config.save() {
+                ui.error(&format!("Failed to save config: {}", e));
+            } else {
+                let msg = i18n
+                    .t("config_success")
+                    .replacen("{}", &key, 1)
+                    .replacen("{}", &value, 1);
+                ui.success(&msg);
+            }
+        }
+        ConfigAction::Get { key } => {
+            let val = match key.as_str() {
+                "server_url" => config.server_url.clone(),
+                "lang" => config.lang.clone(),
+                "port" => config.port.map(|p| p.to_string()),
+                "protocol" => config.protocol.clone(),
+                _ => {
+                    ui.error(&i18n.t("config_error").replace("{}", &key));
+                    return;
+                }
+            };
+            println!("{}", val.unwrap_or_else(|| "not set".to_string()));
+        }
+    }
 }
 
 #[cfg(test)]

@@ -88,6 +88,9 @@ impl I18n {
             "updating" => "Updating xpose CLI",
             "downloading_update" => "Downloading update from GitHub...",
             "update_success" => "Successfully updated to version",
+            "config_success" => "Successfully set {} to {}",
+            "config_usage" => "Usage: xpose config set <key> <value> (keys: server_url, lang, port, protocol)",
+            "config_error" => "Invalid configuration key: {}",
             _ => key,
         }
     }

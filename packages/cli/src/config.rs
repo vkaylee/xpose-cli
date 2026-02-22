@@ -16,6 +16,16 @@ impl XposeConfig {
         Self::load_from_path("xpose.yaml")
     }
 
+    pub fn save(&self) -> Result<(), String> {
+        self.save_to_path("xpose.yaml")
+    }
+
+    pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        let content = serde_yaml::to_string(self).map_err(|e| e.to_string())?;
+        fs::write(path, content).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Self {
         let path = path.as_ref();
         if path.exists() {

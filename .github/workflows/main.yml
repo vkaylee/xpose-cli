@@ -95,6 +95,8 @@ jobs:
             os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+    env:
+      XPOSE_SERVER_URL: ${{ secrets.XPOSE_SERVER_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Cache Cargo & Target
@@ -125,11 +127,11 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
+            TARGET_DIR=./target NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/cli && XPOSE_SERVER_URL=${XPOSE_SERVER_URL} cargo build --release --target x86_64-unknown-linux-musl"
           else
             # For non-linux targets, use host toolchain (simplest for now)
             rustup target add ${{ matrix.target }}
-            cargo build --release --target ${{ matrix.target }}
+            XPOSE_SERVER_URL=${XPOSE_SERVER_URL} cargo build --release --target ${{ matrix.target }}
           fi
       - name: Archive Binary & Generate Checksum
         shell: bash
