@@ -49,8 +49,20 @@ fi
 
 case "$COMMAND" in
     lint)
+        echo "🧐 Checking Version Sync..."
+        PKG_VERSION=$(grep '"version":' packages/cli/package.json | head -n 1 | cut -d '"' -f 4)
+        CARGO_VERSION=$(grep '^version =' packages/cli/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+        
+        if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "package.json: $PKG_VERSION"
+            echo "Cargo.toml: $CARGO_VERSION"
+            exit 1
+        fi
+        echo "✅ Versions match ($PKG_VERSION)."
+
         echo "🦀 Running Lint & Format in Docker..."
-        docker compose run --rm dev bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
         ;;
     test)
         echo "🧪 Running Tests in Docker..."
@@ -62,10 +74,22 @@ case "$COMMAND" in
         docker compose run --rm dev "$@"
         ;;
     all)
+        echo "🧐 Checking Version Sync..."
+        PKG_VERSION=$(grep '"version":' packages/cli/package.json | head -n 1 | cut -d '"' -f 4)
+        CARGO_VERSION=$(grep '^version =' packages/cli/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+        
+        if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "package.json: $PKG_VERSION"
+            echo "Cargo.toml: $CARGO_VERSION"
+            exit 1
+        fi
+        echo "✅ Versions match ($PKG_VERSION)."
+
         echo "🦀 Running Lint & Format in Docker..."
-        docker compose run --rm dev bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
         echo "🧪 Running Tests in Docker..."
-        docker compose run --rm dev cargo test --workspace
+        docker compose run --rm dev cargo test --workspace --locked
         ;;
     *)
         echo "❌ Unknown command: $COMMAND"
