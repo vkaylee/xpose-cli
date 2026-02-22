@@ -1,4 +1,4 @@
-# Implementation Plan: Fix CI with Docker
+# Implementation Plan: Fix CI with Docker (COMPLETED)
 
 ## 📌 User Request (VERBATIM)
 > Fix CI, but all things must go in docker to fit with the host and CI
@@ -23,18 +23,14 @@ Redesign `.github/workflows/ci.yml` to have a dedicated `build` job that creates
 
 ## Phase 4: IMPLEMENTATION
 ### Tasks
-- [ ] Task 4.1: Update `.github/workflows/ci.yml`
+- [x] Update `.github/workflows/ci.yml`
   - Agent: `tech-lead` (or direct implementation)
   - File(s): `.github/workflows/ci.yml`
   - Acceptance: AC1, AC2
   - Verification: Run workflow locally via `act` or verify YAML syntax and logic.
-  - Details: 
-    1. Create a `build` job that runs `docker build -t xpose-builder .`, saves the image (`docker save xpose-builder > xpose-builder.tar`), and uploads it using `actions/upload-artifact`.
-    2. Modify the `lint` job to `needs: build`, download the artifact, `docker load < xpose-builder.tar`, and run the `docker run` command.
-    3. Modify the `test` job to `needs: build`, download the artifact, `docker load < xpose-builder.tar`, and run the `docker run` command.
 
 ### Exit Criteria
-- [ ] `.github/workflows/ci.yml` correctly orchestrates caching and docker container execution.
+- [x] `.github/workflows/ci.yml` correctly orchestrates caching and docker container execution.
 
 ## Phase 5: VALIDATION
 ### Tasks

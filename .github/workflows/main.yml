@@ -12,69 +12,62 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # This job builds the shared Docker image and caches it
+  # This job builds the shared Docker image and saves it as an artifact
   build_base_image:
     name: 🏗️ Build Base Docker Image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and push image to cache
-        uses: docker/build-push-action@v5
+      - name: Build Docker image
+        run: |
+          docker build -t xpose-builder:latest .
+          docker save xpose-builder:latest > xpose-builder.tar
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
         with:
-          context: .
-          tags: xpose-builder:latest
-          cache-from: type=gha,scope=xpose-builder
-          cache-to: type=gha,mode=max,scope=xpose-builder
+          name: xpose-builder
+          path: xpose-builder.tar
+          retention-days: 1
 
-  # Lint job, runs on all triggers
+  # Lint job
   lint:
     name: 🧹 Lint & Format
     needs: build_base_image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Load xpose-builder image from cache
-        uses: docker/build-push-action@v5
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          tags: xpose-builder:latest
-          load: true
-          cache-from: type=gha,scope=xpose-builder
+          name: xpose-builder
+      - name: Load Docker image
+        run: docker load < xpose-builder.tar
       - name: Lint & Format
-        shell: bash
         run: |
           docker run --rm -v $(pwd):/workspace xpose-builder:latest bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
 
-  # Test job, runs on all triggers
+  # Test job
   test:
     name: 🧪 Run Tests
     needs: build_base_image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Load xpose-builder image from cache
-        uses: docker/build-push-action@v5
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          tags: xpose-builder:latest
-          load: true
-          cache-from: type=gha,scope=xpose-builder
+          name: xpose-builder
+      - name: Load Docker image
+        run: docker load < xpose-builder.tar
       - name: Run Tests
-        shell: bash
         run: |
           docker run --rm -v $(pwd):/workspace xpose-builder:latest cargo test --workspace
 
-  # This job builds the release binaries, ONLY on tag push
+  # Build release binaries (ONLY on tag push)
   build_release_binaries:
     name: 📦 Build Release for ${{ matrix.target }}
-    needs: test # Depends on tests passing
-    if: startsWith(github.ref, 'refs/tags/v') # Only run for tags
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -89,14 +82,6 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/cli -> target
       - name: Build
         shell: bash
         run: |
@@ -104,9 +89,10 @@ jobs:
             docker build -t xpose-builder .
             docker run --rm -v $(pwd):/workspace xpose-builder bash -c "cd packages/cli && cargo build --release --target x86_64-unknown-linux-musl"
           else
+            # For non-linux targets, use host toolchain (simplest for now)
+            rustup target add ${{ matrix.target }}
             cargo build --release --target ${{ matrix.target }}
           fi
-        working-directory: .
       - name: Archive Binary & Generate Checksum
         shell: bash
         run: |
@@ -117,7 +103,6 @@ jobs:
           PKG_NAME="xpose-${{ matrix.target }}.tar.gz"
           tar -czvf "$PKG_NAME" -C target/${{ matrix.target }}/release "$BIN_NAME"
           
-          # Generate checksum
           if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
             shasum -a 256 "$PKG_NAME" > "$PKG_NAME.sha256"
           else
@@ -131,7 +116,7 @@ jobs:
             xpose-${{ matrix.target }}.tar.gz
             xpose-${{ matrix.target }}.tar.gz.sha256
 
-  # This job deploys the key server, ONLY on tag push
+  # Deploy key server (ONLY on tag push)
   deploy_key_server:
     name: 🚀 Deploy Key Server
     needs: test
@@ -139,27 +124,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Load xpose-builder image from cache
-        uses: docker/build-push-action@v5
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          tags: xpose-builder:latest
-          load: true
-          cache-from: type=gha,scope=xpose-builder
+          name: xpose-builder
+      - name: Load Docker image
+        run: docker load < xpose-builder.tar
       - name: Deploy to Cloudflare Workers
         env:
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
         run: |
-          # Inject dynamic D1 Database ID
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
-          
           docker run --rm -v $(pwd):/workspace \
             -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} \
-            xpose-builder bash -c "cd packages/key-server && wrangler deploy"
+            xpose-builder:latest bash -c "cd packages/key-server && wrangler deploy"
 
-  # This job publishes the release, ONLY on tag push
+  # Publish Release
   publish_release:
     name: 🚢 Publish Release
     needs: [build_release_binaries, deploy_key_server]
