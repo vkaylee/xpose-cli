@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const crypto = require('crypto');
+const { execSync } = require('child_process');
 
 /**
  * xpose binary downloader
@@ -150,7 +151,29 @@ async function download() {
             }
         }
 
-        console.log(`Successfully installed to ${dest}`);
+        console.log(`Extracting binary...`);
+        try {
+            // Unpack the tar.gz archive
+            // xpose-target.tar.gz usually contains 'xpose' or 'xpose.exe'
+            const isWin = os.platform() === 'win32';
+            const binName = isWin ? 'xpose.exe' : 'xpose';
+
+            execSync(`tar -xzf "${dest}" -C "${BIN_DIR}"`);
+
+            // Ensure permissions on Unix
+            if (!isWin) {
+                const finalBinPath = path.join(BIN_DIR, binName);
+                fs.chmodSync(finalBinPath, 0o755);
+            }
+
+            // Cleanup the archive
+            fs.unlinkSync(dest);
+        } catch (e) {
+            console.error(`❌ Extraction failed: ${e.message}`);
+            process.exit(1);
+        }
+
+        console.log(`Successfully installed to ${BIN_DIR}`);
         console.log('Note: Run "xpose" to start the tunnel.');
 
     } catch (err) {
