@@ -1,14 +1,17 @@
 services:
   dev:
-    build: .
+    build:
+      context: .
+      target: dev
     volumes:
       - .:/workspace
-      - ~/.cargo/registry:/usr/local/cargo/registry
-      - ~/.cargo/git:/usr/local/cargo/git
+      - ${CARGO_HOME_REGISTRY:-~/.cargo/registry}:/usr/local/cargo/registry
+      - ${CARGO_HOME_GIT:-~/.cargo/git}:/usr/local/cargo/git
       - target-cache:/workspace/target
-      - ~/.cache/sccache:/workspace/.sccache
+      - ${SCCACHE_CACHE_DIR:-~/.cache/sccache}:/workspace/.sccache
     environment:
       - MT_TUNNEL_PORT=3000
+      - SCCACHE_DIR=/workspace/.sccache
     stdin_open: true
     tty: true
 

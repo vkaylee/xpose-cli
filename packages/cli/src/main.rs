@@ -557,7 +557,9 @@ fn get_machine_id() -> Result<String, Box<dyn std::error::Error>> {
     get_machine_id_from_path(path)
 }
 
-fn get_machine_id_from_path(path: std::path::PathBuf) -> Result<String, Box<dyn std::error::Error>> {
+fn get_machine_id_from_path(
+    path: std::path::PathBuf,
+) -> Result<String, Box<dyn std::error::Error>> {
     if path.exists() {
         return Ok(fs::read_to_string(path)?.trim().to_string());
     }
@@ -709,7 +711,7 @@ mod tests {
             check_version_compatibility("0.2.0", "0.1.0", "0.1.0"),
             VersionStatus::UpToDate
         );
-        
+
         // Edge cases
         assert_eq!(
             check_version_compatibility("0.2.0", "0.2.0", "0.3.0"),
@@ -765,11 +767,11 @@ mod tests {
     fn test_get_machine_id_logic() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("device_id");
-        
+
         // Initial generation
         let id1 = get_machine_id_from_path(path.clone()).unwrap();
         assert!(Uuid::parse_str(&id1).is_ok());
-        
+
         // Persistence check
         let id2 = get_machine_id_from_path(path).unwrap();
         assert_eq!(id1, id2);
