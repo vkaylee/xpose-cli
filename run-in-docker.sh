@@ -11,8 +11,9 @@ show_usage() {
     echo "  all     Run both lint and test (default)"
     echo "  help    Show this help message"
     echo ""
-    echo "Environment Variables (CI):"
+    echo "Environment Variables:"
     echo "  GITHUB_ACTIONS=true    Enable CI-optimized output and caching"
+    echo "  NO_BUILD=true          Skip the build phase (useful if image is already built)"
 }
 
 # --- Configuration ---
@@ -39,8 +40,10 @@ else
     COMPOSE_FLAGS=""
 fi
 
-echo "🐳 Building Docker image via Compose..."
-docker compose build $COMPOSE_FLAGS dev
+if [ "$NO_BUILD" != "true" ] && [ "$SKIP_BUILD" != "true" ]; then
+    echo "🐳 Building Docker image via Compose..."
+    docker compose build $COMPOSE_FLAGS dev
+fi
 
 case "$COMMAND" in
     lint)

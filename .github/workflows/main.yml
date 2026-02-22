@@ -29,8 +29,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Lint & Format
-        run: |
-          docker run --rm -v $(pwd):/workspace xpose-builder:latest bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+        run: NO_BUILD=true ./run-in-docker.sh lint
 
   # Test job
   test:
@@ -49,8 +48,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run Tests
-        run: |
-          docker run --rm -v $(pwd):/workspace xpose-builder:latest cargo test --workspace
+        run: NO_BUILD=true ./run-in-docker.sh test
 
   # Build release binaries (ONLY on tag push)
   build_release_binaries:
@@ -128,9 +126,7 @@ jobs:
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
         run: |
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
-          docker run --rm -v $(pwd):/workspace \
-            -e CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }} \
-            xpose-builder:latest bash -c "cd packages/key-server && wrangler deploy"
+          NO_BUILD=true docker compose run --rm dev bash -c "cd packages/key-server && wrangler deploy"
 
   # Publish Release
   publish_release:
@@ -150,8 +146,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to NPM
         run: |
-          docker build -t xpose-publisher .
-          docker run --rm -v $(pwd):/workspace -e NPM_TOKEN=${{ secrets.NPM_TOKEN }} xpose-publisher bash -c "
+          docker compose run --rm dev bash -c "
             cd packages/cli && 
             echo '//registry.npmjs.org/:_authToken=\${NPM_TOKEN}' > .npmrc && 
             npm publish --access public
