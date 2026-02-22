@@ -7,8 +7,8 @@ services:
       - .:/workspace
       - ${CARGO_HOME_REGISTRY:-~/.cargo/registry}:/usr/local/cargo/registry
       - ${CARGO_HOME_GIT:-~/.cargo/git}:/usr/local/cargo/git
-      - target-cache:/workspace/target
-      - ${SCCACHE_CACHE_DIR:-~/.cache/sccache}:/workspace/.sccache
+      - ${TARGET_DIR:-target-cache}:/workspace/target
+      - ${SCCACHE_CACHE_DIR:-sccache-cache}:/workspace/.sccache
     environment:
       - MT_TUNNEL_PORT=3000
       - SCCACHE_DIR=/workspace/.sccache
@@ -17,3 +17,4 @@ services:
 
 volumes:
   target-cache:
+  sccache-cache:

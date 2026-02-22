@@ -34,7 +34,8 @@ if [ "$GITHUB_ACTIONS" = "true" ]; then
     export CARGO_HOME_REGISTRY=${CARGO_HOME_REGISTRY:-/tmp/cargo_registry}
     export CARGO_HOME_GIT=${CARGO_HOME_GIT:-/tmp/cargo_git}
     export SCCACHE_CACHE_DIR=${SCCACHE_CACHE_DIR:-/tmp/sccache_cache}
-    mkdir -p "$CARGO_HOME_REGISTRY" "$CARGO_HOME_GIT" "$SCCACHE_CACHE_DIR"
+    export TARGET_DIR=${TARGET_DIR:-/tmp/target_cache}
+    mkdir -p "$CARGO_HOME_REGISTRY" "$CARGO_HOME_GIT" "$SCCACHE_CACHE_DIR" "$TARGET_DIR"
     COMPOSE_FLAGS="--progress=plain"
 else
     echo "🏠 Running in local mode..."

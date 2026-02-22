@@ -18,6 +18,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo & Target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/cargo_registry
+            /tmp/cargo_git
+            /tmp/sccache_cache
+            /tmp/target_cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build Docker Image (with cache)
@@ -37,6 +48,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo & Target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/cargo_registry
+            /tmp/cargo_git
+            /tmp/sccache_cache
+            /tmp/target_cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build Docker Image (with cache)
@@ -69,6 +91,18 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo & Target
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/cargo_registry
+            /tmp/cargo_git
+            /tmp/sccache_cache
+            /tmp/target_cache
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            linux-cargo-
       - name: Set up Docker Buildx
         if: matrix.target == 'x86_64-unknown-linux-musl'
         uses: docker/setup-buildx-action@v3
