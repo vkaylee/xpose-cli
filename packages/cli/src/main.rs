@@ -14,6 +14,7 @@ use std::env;
 use std::process;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
+use console::style;
 
 use api::ApiClient;
 use cloudflared::CloudflaredConfig;
@@ -183,7 +184,7 @@ async fn main() {
         process::exit(0);
     }
 
-    let ui = Ui::new();
+    let ui = Ui::new(i18n.clone());
     info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
 
     let port = args
@@ -256,37 +257,103 @@ async fn main() {
     }
 
     // Version Check
-    if let Ok(config) = api_client.get_config().await {
-        let current_version = env!("CARGO_PKG_VERSION");
-        match check_version_compatibility(
-            current_version,
-            &config.min_cli_version,
-            &config.recommended_version,
-        ) {
-            VersionStatus::Outdated => {
-                ui.error(
-                    &i18n
-                        .t("version_outdated")
-                        .replace("{}", current_version)
-                        .replace("{}", &config.min_cli_version),
-                );
+    let config = match api_client.get_config().await {
+        Ok(c) => c,
+        Err(e) => {
+            ui.error(&format!("Failed to fetch config: {}", e));
+            process::exit(1);
+        }
+    };
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    match check_version_compatibility(
+        current_version,
+        &config.min_cli_version,
+        &config.recommended_version,
+    ) {
+        VersionStatus::Outdated => {
+            ui.error(
+                &i18n
+                    .t("version_outdated")
+                    .replace("{}", current_version)
+                    .replace("{}", &config.min_cli_version),
+            );
+            process::exit(1);
+        }
+        VersionStatus::UpdateAvailable => {
+            ui.info(
+                &i18n
+                    .t("update_available")
+                    .replace("{}", &config.recommended_version)
+                    .replace("{}", current_version),
+            );
+        }
+        VersionStatus::UpToDate => {}
+    }
+
+    // QR Authentication Handshake
+    ui.draw_auth_panel(); // Transitioning state
+
+    let auth_init = match api_client.init_auth().await {
+        Ok(init) => init,
+        Err(e) => {
+            ui.error(&format!("Failed to initiate authentication: {}", e));
+            process::exit(1);
+        }
+    };
+    ui.draw_qr_auth(&auth_init.verify_url);
+
+    println!(
+        "\n  {} {}",
+        style("➜").cyan(),
+        style(i18n.t("help_qr_scan")).bold()
+    );
+    println!(
+        "  {} {}\n",
+        style("⚡").yellow(),
+        style(&auth_init.verify_url).underlined().dim()
+    );
+
+    // Poll for verification
+    let session_id = auth_init.session_id.clone();
+    let auth_token = auth_init.auth_token.clone();
+
+    let mut verified = false;
+    let start_time = std::time::Instant::now();
+    let timeout = Duration::from_secs(300); // 5 mins
+
+    while !verified {
+        if start_time.elapsed() > timeout {
+            ui.error("Authentication timed out.");
+            process::exit(1);
+        }
+
+        let status = match api_client.check_auth_status(&session_id, &auth_token).await {
+            Ok(s) => s,
+            Err(e) => {
+                ui.error(&format!("Failed to check authentication status: {}", e));
                 process::exit(1);
             }
-            VersionStatus::UpdateAvailable => {
-                ui.info(
-                    &i18n
-                        .t("update_available")
-                        .replace("{}", &config.recommended_version)
-                        .replace("{}", current_version),
-                );
-            }
-            VersionStatus::UpToDate => {}
+        };
+
+        if status == "VERIFIED" {
+            verified = true;
+        } else {
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
 
+    ui.success("Authenticated successfully!");
+
     let pb = ui.create_spinner(i18n.t("requesting_tunnel"));
     let tunnel_info = match api_client
-        .request_tunnel(&device_id, Some(port), Some(protocol))
+        .request_tunnel(
+            &device_id,
+            Some(port),
+            Some(protocol),
+            Some(session_id.clone()),
+            Some(auth_token.clone()),
+        )
         .await
     {
         Ok(info) => info,
@@ -319,7 +386,7 @@ async fn main() {
     let public_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
     sleep(Duration::from_millis(1500)).await;
 
-    ui.draw_connected_panel(port, &public_url, protocol, &i18n);
+    ui.draw_connected_panel(port, &public_url, protocol);
     ui.info(i18n.t("running_background"));
 
     let _ = registry.register(registry::TunnelEntry {

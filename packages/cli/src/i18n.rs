@@ -30,6 +30,7 @@ impl Language {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct I18n {
     pub lang: Language,
 }
@@ -82,6 +83,7 @@ impl I18n {
             "update_available" => "Update available: v{} (Current: v{}). Please run 'npm update -g xpose-cli' soon.",
             "requesting_tunnel" => "Requesting tunnel from pool...",
             "running_background" => "cloudflared is running in background. Tunnel token hidden for security.",
+            "help_qr_scan" => "Scan the QR code above or open the link to authorize this connection.",
             _ => key,
         }
     }
@@ -118,6 +120,7 @@ impl I18n {
             "update_available" => "Có phiên bản mới: v{} (Hiện tại: v{}). Vui lòng chạy 'npm update -g xpose-cli' sớm.",
             "requesting_tunnel" => "Đang yêu cầu tunnel từ pool...",
             "running_background" => "cloudflared đang chạy ngầm. Token tunnel được ẩn để bảo mật.",
+            "help_qr_scan" => "Quét mã QR ở trên hoặc mở liên kết để xác thực kết nối này.",
             _ => self.get_en(key),
         }
     }
@@ -156,6 +159,7 @@ impl I18n {
             }
             "requesting_tunnel" => "正在从池中请求隧道...",
             "running_background" => "cloudflared 正在后台运行。为了安全，隧道令牌已隐藏。",
+            "help_qr_scan" => "扫描上方二维码或点击链接以授权此连接。",
             _ => self.get_en(key),
         }
     }

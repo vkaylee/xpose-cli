@@ -8,6 +8,20 @@ pub struct RequestPayload {
     pub device_id: String,
     pub port: Option<u16>,
     pub protocol: Option<String>,
+    pub session_id: Option<String>,
+    pub auth_token: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct AuthInitResponse {
+    pub session_id: String,
+    pub auth_token: String,
+    pub verify_url: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct AuthStatusResponse {
+    pub status: String,
 }
 
 #[derive(Serialize)]
@@ -79,12 +93,16 @@ impl ApiClient {
         device_id: &str,
         port: Option<u16>,
         protocol: Option<&str>,
+        session_id: Option<String>,
+        auth_token: Option<String>,
     ) -> Result<TunnelInfo, String> {
         let url = format!("{}/api/request", self.base_url);
         let payload = RequestPayload {
             device_id: device_id.to_string(),
             port,
             protocol: protocol.map(|s| s.to_string()),
+            session_id,
+            auth_token,
         };
 
         let res = self
@@ -173,6 +191,45 @@ impl ApiClient {
         let _ = self.client.post(&url).json(&payload).send().await;
         Ok(())
     }
+
+    pub async fn init_auth(&self) -> Result<AuthInitResponse, String> {
+        let url = format!("{}/api/auth/init", self.base_url);
+        let res = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if res.status().is_success() {
+            let data: AuthInitResponse = res.json().await.map_err(|e| e.to_string())?;
+            Ok(data)
+        } else {
+            Err("Failed to initialize authentication".to_string())
+        }
+    }
+
+    pub async fn check_auth_status(
+        &self,
+        session_id: &str,
+        auth_token: &str,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/api/auth/check?s={}&t={}",
+            self.base_url, session_id, auth_token
+        );
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if res.status().is_success() {
+            let data: AuthStatusResponse = res.json().await.map_err(|e| e.to_string())?;
+            Ok(data.status)
+        } else {
+            Err("Failed to check authentication status".to_string())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -216,7 +273,7 @@ mod tests {
 
         let client = ApiClient::new(url);
         let info = client
-            .request_tunnel("dev1", Some(3000), Some("tcp"))
+            .request_tunnel("dev1", Some(3000), Some("tcp"), None, None)
             .await
             .unwrap();
 
@@ -286,7 +343,7 @@ mod tests {
             .await;
 
         let client = ApiClient::new(url);
-        let res = client.request_tunnel("dev1", None, None).await;
+        let res = client.request_tunnel("dev1", None, None, None, None).await;
         assert!(res.is_err());
     }
 
@@ -302,7 +359,7 @@ mod tests {
             .await;
 
         let client = ApiClient::new(url);
-        let res = client.request_tunnel("dev1", None, None).await;
+        let res = client.request_tunnel("dev1", None, None, None, None).await;
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), "Custom error message");
     }

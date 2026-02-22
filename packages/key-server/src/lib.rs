@@ -13,6 +13,27 @@ struct Tunnel {
     last_heartbeat: Option<f64>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct AuthSession {
+    id: String,
+    auth_token: String,
+    status: String,
+    created_at: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AuthInitResponse {
+    session_id: String,
+    auth_token: String,
+    verify_url: String,
+}
+
+#[derive(Deserialize)]
+struct AuthCheckRequest {
+    session_id: String,
+    auth_token: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ServerConfigResponse {
     pub min_cli_version: String,
@@ -31,11 +52,8 @@ struct RequestTunnelRequest {
     device_id: String,
     port: Option<u16>,
     protocol: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct DeviceRequest {
-    device_id: String,
+    session_id: Option<String>,
+    auth_token: Option<String>,
 }
 
 pub const MIN_CLI_VERSION: &str = "0.1.0";
@@ -144,6 +162,113 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 Err(e) => Response::error(format!("Database error: {e}"), 500),
             }
         })
+        .post_async("/api/auth/init", |req, ctx| async move {
+            let db = ctx.env.d1("DB")?;
+            let session_id = uuid::Uuid::new_v4().to_string();
+            let auth_token = uuid::Uuid::new_v4().to_string();
+            
+            db.prepare("INSERT INTO auth_sessions (id, auth_token, status) VALUES (?, ?, 'PENDING')")
+                .bind(&[session_id.clone().into(), auth_token.clone().into()])?
+                .run()
+                .await?;
+            
+            let url = req.url()?;
+            let verify_url = format!("{}://{}/api/auth/verify?s={}", url.scheme(), url.host_str().unwrap_or("localhost"), session_id);
+            
+            Response::from_json(&AuthInitResponse {
+                session_id,
+                auth_token,
+                verify_url,
+            })
+        })
+        .get_async("/api/auth/check", |req, ctx| async move {
+            let url = req.url()?;
+            let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
+            let auth_token = url.query_pairs().find(|(k, _)| k == "t").map(|(_, v)| v.to_string()).unwrap_or_default();
+            
+            let db = ctx.env.d1("DB")?;
+            let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ?")
+                .bind(&[session_id.into(), auth_token.into()])?
+                .first::<AuthSession>(None)
+                .await?;
+            
+            match session {
+                Some(s) => Response::from_json(&serde_json::json!({ "status": s.status })),
+                None => Response::error("Session not found", 404),
+            }
+        })
+        .get_async("/api/auth/verify", |req, _| async move {
+            let url = req.url()?;
+            let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
+            
+            let html = format!(r#"
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>xpose - Verify Connection</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>
+                        body {{ font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: white; }}
+                        .card {{ background: #1e293b; padding: 2rem; border-radius: 1rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); text-align: center; max-width: 400px; }}
+                        h1 {{ color: #38bdf8; }}
+                        button {{ background: #0ea5e9; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-size: 1rem; cursor: pointer; transition: background 0.2s; }}
+                        button:hover {{ background: #0284c7; }}
+                        .success {{ color: #4ade80; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>Confirm Connection</h1>
+                        <p>A new CLI instance is requesting access to your tunnels.</p>
+                        <form method="POST">
+                            <input type="hidden" name="s" value="{}">
+                            <button type="submit">Verify Now</button>
+                        </form>
+                    </div>
+                </body>
+                </html>
+            "#, session_id);
+            
+            let headers = Headers::new();
+            headers.set("Content-Type", "text/html")?;
+            Ok(Response::ok(html)?.with_headers(headers))
+        })
+        .post_async("/api/auth/verify", |mut req, ctx| async move {
+            let form = req.form_data().await?;
+            let session_id = form.get("s").and_then(|e| match e {
+                FormEntry::Field(f) => Some(f),
+                _ => None
+            }).unwrap_or_default();
+            
+            let db = ctx.env.d1("DB")?;
+            db.prepare("UPDATE auth_sessions SET status = 'VERIFIED' WHERE id = ? AND status = 'PENDING'")
+                .bind(&[session_id.into()])?
+                .run()
+                .await?;
+            
+            let html = r#"
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>xpose - Verified</title>
+                    <style>
+                        body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: white; }
+                        .card { background: #1e293b; padding: 2rem; border-radius: 1rem; text-align: center; }
+                        h1 { color: #4ade80; }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>✓ Verified Successfully</h1>
+                        <p>You can go back to your terminal now.</p>
+                    </div>
+                </body>
+                </html>
+            "#;
+            let headers = Headers::new();
+            headers.set("Content-Type", "text/html")?;
+            Ok(Response::ok(html)?.with_headers(headers))
+        })
         .post_async("/api/request", |mut req, ctx| async move {
             let ip = req.headers().get("cf-connecting-ip")?.unwrap_or_else(|| "unknown".to_string());
             let db = ctx.env.d1("DB")?;
@@ -153,6 +278,26 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             }
 
             let body: RequestTunnelRequest = req.json().await?;
+
+            // QR Auth Check
+            if let (Some(sid), Some(token)) = (body.session_id, body.auth_token) {
+                let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ? AND status = 'VERIFIED'")
+                    .bind(&[sid.clone().into(), token.into()])?
+                    .first::<AuthSession>(None)
+                    .await?;
+                
+                if session.is_none() {
+                    return Response::error("Session not verified or invalid", 401);
+                }
+                
+                // Mark session as USED
+                db.prepare("UPDATE auth_sessions SET status = 'USED' WHERE id = ?")
+                    .bind(&[sid.into()])?
+                    .run()
+                    .await?;
+            } else {
+                return Response::error("Authentication token required", 401);
+            }
 
             // Port restriction
             if let Some(p) = body.port {

@@ -8,13 +8,15 @@ use std::time::Duration;
 pub struct Ui {
     term: Term,
     metrics_history: Vec<u64>,
+    pub i18n: I18n,
 }
 
 impl Ui {
-    pub fn new() -> Self {
+    pub fn new(i18n: I18n) -> Self {
         Self {
             term: Term::stdout(),
             metrics_history: Vec::with_capacity(20),
+            i18n,
         }
     }
 
@@ -48,7 +50,8 @@ impl Ui {
             .write_line(&format!("{} {}", style("i").cyan().bold(), msg));
     }
 
-    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str, i18n: &I18n) {
+    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str) {
+        let i18n = &self.i18n;
         println!();
         println!(
             "  {} {}",
@@ -95,7 +98,31 @@ impl Ui {
         let _ = self.term.write_line(&format!("{border}"));
 
         // Generate and draw QR Code using simple string renderer
-        if let Ok(code) = QrCode::new(public_url) {
+        self.draw_qr(public_url, "QR Code:");
+
+        let _ = self.term.write_line(&format!(
+            "\n  {} {}\n",
+            style("💡 Hint:").yellow().italic(),
+            style(i18n.t("cli_help")).bright().black()
+        ));
+    }
+
+    pub fn draw_auth_panel(&self) {
+        println!();
+        println!(
+            "  {} {}",
+            Emoji("🔒", "!!"),
+            style("SECURITY HANDSHAKE").yellow().bold()
+        );
+        println!("  {}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+    }
+
+    pub fn draw_qr_auth(&self, url: &str) {
+        self.draw_qr(url, "Scan to Authorize:");
+    }
+
+    fn draw_qr(&self, data: &str, label: &str) {
+        if let Ok(code) = QrCode::new(data) {
             let string = code
                 .render::<char>()
                 .quiet_zone(false)
@@ -104,17 +131,11 @@ impl Ui {
                 .build();
             let _ = self
                 .term
-                .write_line(&format!("  {} QR Code:", style("▶").cyan()));
+                .write_line(&format!("  {} {}", style("▶").cyan(), label));
             for line in string.lines() {
                 let _ = self.term.write_line(&format!("  {line}"));
             }
         }
-
-        let _ = self.term.write_line(&format!(
-            "\n  {} {}\n",
-            style("💡 Hint:").yellow().italic(),
-            style(i18n.t("cli_help")).bright().black()
-        ));
     }
 
     pub fn draw_live_metrics(

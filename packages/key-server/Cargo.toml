@@ -11,6 +11,7 @@ worker = { version = "0.7.4", features = ["d1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+uuid = { version = "1.10", features = ["v4", "js"] }
 console_error_panic_hook = "0.1"
 
 
