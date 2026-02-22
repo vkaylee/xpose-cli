@@ -206,10 +206,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to NPM
         run: |
-          NO_BUILD=true ./run-in-docker.sh run bash -c "
-            cd packages/cli && 
-            echo '//registry.npmjs.org/:_authToken=\${NPM_TOKEN}' > .npmrc && 
-            npm publish --access public
-          "
+          cd packages/cli
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+          npm publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
