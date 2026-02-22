@@ -197,6 +197,7 @@ jobs:
     needs: [build_release_binaries, deploy_key_server]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v4
       - name: Download Artifacts
