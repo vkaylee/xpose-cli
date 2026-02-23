@@ -184,69 +184,9 @@ async fn run_cli(
 
         match command {
             Commands::Dashboard => {
-                // QR Authentication Handshake for Dashboard
-                if let Ok(ui_lock) = ui.lock() {
-                    ui_lock.draw_auth_panel();
-                }
-                let auth_init = match api_client.init_auth().await {
-                    Ok(init) => init,
-                    Err(e) => {
-                        if let Ok(ui_lock) = ui.lock() {
-                            ui_lock.error(&format!("Failed to initiate authentication: {}", e));
-                        }
-                        return 1;
-                    }
-                };
-                if let Ok(ui_lock) = ui.lock() {
-                    ui_lock.draw_qr_auth(&auth_init.verify_url);
-                }
-
-                println!(
-                    "\n  {} {}",
-                    style("➜").cyan(),
-                    style(i18n.t("help_qr_scan")).bold()
-                );
-                println!(
-                    "  {} {}\n",
-                    style("⚡").yellow(),
-                    style(&auth_init.verify_url).underlined().dim()
-                );
-
-                let session_id = auth_init.session_id.clone();
-                let auth_token = auth_init.auth_token.clone();
-
-                let mut verified = false;
-                let start_time = std::time::Instant::now();
-                let timeout = Duration::from_secs(300);
-
-                while !verified {
-                    if start_time.elapsed() > timeout {
-                        if let Ok(ui_lock) = ui.lock() {
-                            ui_lock.error("Authentication timed out.");
-                        }
-                        return 1;
-                    }
-                    let status = match api_client.check_auth_status(&session_id, &auth_token).await
-                    {
-                        Ok(s) => s,
-                        Err(e) => {
-                            if let Ok(ui_lock) = ui.lock() {
-                                ui_lock.error(&format!(
-                                    "Failed to check authentication status: {}",
-                                    e
-                                ));
-                            }
-                            return 1;
-                        }
-                    };
-                    if status == "VERIFIED" {
-                        verified = true;
-                    } else {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                    }
-                }
-                if let Ok(ui_lock) = ui.lock() {
-                    ui_lock.success("Authenticated successfully!");
+                let success = handle_dashboard_auth(&api_client, &ui, i18n).await;
+                if !success {
+                    return 1;
                 }
 
                 let mut app = dashboard::DashboardApp::new(server_url.clone(), i18n.clone());
@@ -267,8 +207,6 @@ async fn run_cli(
             }
         }
     }
-
-    info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
 
     // Merge Port & Protocol: Args > YAML > Env
     let port = args
@@ -304,8 +242,35 @@ async fn run_cli(
         .or(yaml_config.server_url.clone())
         .unwrap_or_else(|| KEY_SERVER_URL.to_string());
 
-    let api_client = ApiClient::new(server_url.clone());
+    info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
 
+    let exit_code = run_tunnel(
+        args,
+        yaml_config,
+        i18n,
+        ui,
+        &registry,
+        &device_id,
+        port,
+        protocol,
+        &server_url,
+    )
+    .await;
+    exit_code
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_tunnel(
+    args: Args,
+    yaml_config: XposeConfig,
+    i18n: &i18n::I18n,
+    ui: Arc<Mutex<Ui>>,
+    registry: &registry::Registry,
+    device_id: &str,
+    port: u16,
+    protocol: &str,
+    server_url: &str,
+) -> i32 {
     let cf_config = CloudflaredConfig::new();
     if !cf_config.is_installed() {
         let pb = {
@@ -323,6 +288,8 @@ async fn run_cli(
         let ui_lock = ui.lock().expect("Failed to lock UI");
         ui_lock.success(i18n.t("binary_found"));
     }
+
+    let api_client = ApiClient::new(server_url.to_string());
 
     // Version Check
     let config = match api_client.get_config().await {
@@ -362,19 +329,11 @@ async fn run_cli(
         VersionStatus::UpToDate => {}
     }
 
-    let tunnel_info = match request_and_connect_tunnel(
-        &api_client,
-        &ui,
-        i18n,
-        port,
-        protocol,
-        &device_id,
-    )
-    .await
-    {
-        Ok(info) => info,
-        Err(_) => return 1,
-    };
+    let tunnel_info =
+        match request_and_connect_tunnel(&api_client, &ui, i18n, port, protocol, device_id).await {
+            Ok(info) => info,
+            Err(_) => return 1,
+        };
 
     let active_tunnels = registry.list_active();
     let mut metrics_port = 55555;
@@ -392,7 +351,7 @@ async fn run_cli(
                 let ui_lock = ui.lock().expect("Failed to lock UI");
                 ui_lock.error(&format!("Failed to start cloudflared: {e}"));
             }
-            let _ = api_client.release_tunnel(&device_id).await;
+            let _ = api_client.release_tunnel(device_id).await;
             return 1;
         }
     };
@@ -436,8 +395,8 @@ async fn run_cli(
         metrics_port,
     });
 
-    let heartbeat_device = device_id.clone();
-    let heartbeat_api = ApiClient::new(server_url.clone());
+    let heartbeat_device = device_id.to_string();
+    let heartbeat_api = ApiClient::new(server_url.to_string());
     let metrics_url = format!("http://localhost:{metrics_port}/metrics");
     let metrics_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -452,7 +411,7 @@ async fn run_cli(
     let health_url = format!("http://localhost:{port}");
 
     let telemetry_api = api_client.clone();
-    let telemetry_device = device_id.clone();
+    let telemetry_device = device_id.to_string();
 
     let handle = tokio::spawn(async move {
         let mut last_rx: u64 = 0;
@@ -534,10 +493,10 @@ async fn run_cli(
                 println!("\nShutting down tunnel...");
                 let _ = child.kill();
                 send_telemetry(&telemetry_api, "stop", &telemetry_device, serde_json::json!({})).await;
-                let _ = api_client.release_tunnel(&device_id).await;
+                let _ = api_client.release_tunnel(device_id).await;
                 let _ = registry::Registry::new().unregister(process::id());
                 handle.abort();
-                process::exit(0);
+                return 0;
             }
             res = tokio::task::spawn_blocking(|| crossterm::event::poll(Duration::from_millis(100))) => {
                 if let Ok(Ok(true)) = res {
@@ -547,20 +506,20 @@ async fn run_cli(
                                 println!("\nStopping tunnel as requested...");
                                 let _ = child.kill();
                                 send_telemetry(&telemetry_api, "stop", &telemetry_device, serde_json::json!({})).await;
-                                let _ = api_client.release_tunnel(&device_id).await;
+                                let _ = api_client.release_tunnel(device_id).await;
                                 let _ = registry::Registry::new().unregister(process::id());
                                 handle.abort();
-                                process::exit(0);
+                                return 0;
                             }
                             crossterm::event::KeyCode::Char('r') => {
                                 println!("\nRestarting tunnel...");
                                 let _ = child.kill();
-                                let _ = api_client.release_tunnel(&device_id).await;
+                                let _ = api_client.release_tunnel(device_id).await;
                                 let _ = registry::Registry::new().unregister(process::id());
                                 handle.abort();
                                 let ui_lock = ui.lock().expect("Failed to lock UI");
                                 ui_lock.info("Tunnel stopped. Re-run command to restart.");
-                                process::exit(0);
+                                return 0;
                             }
                             _ => {}
                         }
@@ -569,6 +528,74 @@ async fn run_cli(
             }
         }
     }
+}
+
+async fn handle_dashboard_auth(
+    api_client: &ApiClient,
+    ui: &Arc<Mutex<Ui>>,
+    i18n: &i18n::I18n,
+) -> bool {
+    // QR Authentication Handshake for Dashboard
+    if let Ok(ui_lock) = ui.lock() {
+        ui_lock.draw_auth_panel();
+    }
+    let auth_init = match api_client.init_auth().await {
+        Ok(init) => init,
+        Err(e) => {
+            if let Ok(ui_lock) = ui.lock() {
+                ui_lock.error(&format!("Failed to initiate authentication: {}", e));
+            }
+            return false;
+        }
+    };
+    if let Ok(ui_lock) = ui.lock() {
+        ui_lock.draw_qr_auth(&auth_init.verify_url);
+    }
+
+    println!(
+        "\n  {} {}",
+        style("➜").cyan(),
+        style(i18n.t("help_qr_scan")).bold()
+    );
+    println!(
+        "  {} {}\n",
+        style("⚡").yellow(),
+        style(&auth_init.verify_url).underlined().dim()
+    );
+
+    let session_id = auth_init.session_id.clone();
+    let auth_token = auth_init.auth_token.clone();
+
+    let mut verified = false;
+    let start_time = std::time::Instant::now();
+    let timeout = Duration::from_secs(300);
+
+    while !verified {
+        if start_time.elapsed() > timeout {
+            if let Ok(ui_lock) = ui.lock() {
+                ui_lock.error("Authentication timed out.");
+            }
+            return false;
+        }
+        let status = match api_client.check_auth_status(&session_id, &auth_token).await {
+            Ok(s) => s,
+            Err(e) => {
+                if let Ok(ui_lock) = ui.lock() {
+                    ui_lock.error(&format!("Failed to check authentication status: {}", e));
+                }
+                return false;
+            }
+        };
+        if status == "VERIFIED" {
+            verified = true;
+        } else {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+    if let Ok(ui_lock) = ui.lock() {
+        ui_lock.success("Authenticated successfully!");
+    }
+    true
 }
 
 fn setup_logging() -> Result<(), fern::InitError> {
@@ -1038,6 +1065,18 @@ mod tests {
             "Internal server error. Please try again later."
         );
         assert_eq!(map_error("other"), "An unexpected error occurred: other");
+        assert_eq!(
+            map_error("timeout on request"),
+            "Request timed out. Please check your internet connection."
+        );
+        assert_eq!(
+            map_error("status 409: conflict"),
+            "Tunnel collision. Someone else might be using this tunnel, please retry."
+        );
+        assert_eq!(
+            map_error("server returned 503"),
+            "No tunnels available in the pool. Please try again later."
+        );
     }
 
     #[test]
@@ -1057,6 +1096,16 @@ mod tests {
         assert_eq!(
             check_version_compatibility("1.0.5", "1.0.0", "1.1.0"),
             VersionStatus::UpdateAvailable
+        );
+        // Version prefix and whitespace
+        assert_eq!(
+            check_version_compatibility("v1.0.0", "1.0.0", "1.1.0"),
+            VersionStatus::UpdateAvailable
+        );
+        // Invalid versions should fallback to 0.0.0
+        assert_eq!(
+            check_version_compatibility("invalid", "1.0.0", "1.1.0"),
+            VersionStatus::Outdated
         );
     }
 
@@ -1202,5 +1251,130 @@ mod tests {
         let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_send_telemetry_smoke() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/telemetry")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        send_telemetry(
+            &api,
+            "test_event",
+            "dev1",
+            serde_json::json!({"foo": "bar"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_port_env_var() {
+        std::env::set_var("MT_TUNNEL_PORT", "9999");
+        let args = Args::parse_from(["xpose"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        // This will fail later but should pick up the port
+        let _code = run_cli(args, config, &i18n, ui).await;
+        std::env::remove_var("MT_TUNNEL_PORT");
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_dash_subcommand_init_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/auth/init")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "dashboard"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dashboard_auth_success() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+
+        let _m1 = server
+            .mock("POST", "/api/auth/init")
+            .with_status(200)
+            .with_body(r#"{"session_id": "s1", "auth_token": "t1", "verify_url": "http://v"}"#)
+            .create_async()
+            .await;
+
+        let _m2 = server
+            .mock("GET", "/api/auth/check?s=s1&t=t1")
+            .with_status(200)
+            .with_body(r#"{"status": "VERIFIED"}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        let success = handle_dashboard_auth(&api, &ui, &i18n).await;
+        assert!(success);
+    }
+
+    #[tokio::test]
+    async fn test_handle_config_logic() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let config = XposeConfig::default();
+
+        // Test Set
+        let action = ConfigAction::Set {
+            key: "port".to_string(),
+            value: "9999".to_string(),
+        };
+        handle_config(action, config.clone(), &ui, &i18n).await;
+
+        // Test Get
+        let action_get = ConfigAction::Get {
+            key: "server_url".to_string(),
+        };
+        handle_config(action_get, config.clone(), &ui, &i18n).await;
+
+        // Test Invalid Key
+        let action_err = ConfigAction::Set {
+            key: "invalid".to_string(),
+            value: "v".to_string(),
+        };
+        handle_config(action_err, config.clone(), &ui, &i18n).await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_update_logic() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_body(r#"{"min_cli_version": "0.4.11", "recommended_version": "0.4.11"}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        // Should be up to date
+        let res = handle_update(&api, &ui, &i18n, false).await;
+        assert!(res.is_ok());
     }
 }

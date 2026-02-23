@@ -411,4 +411,72 @@ mod tests {
         assert_eq!(status, "VERIFIED");
         mock.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_init_auth_failure() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/auth/init")
+            .with_status(500)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        assert!(client.init_auth().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_auth_status_failure() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("GET", "/api/auth/check?s=s1&t=t1")
+            .with_status(404)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        assert!(client.check_auth_status("s1", "t1").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_tunnel_invalid_format() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/request")
+            .with_status(200)
+            .with_body(r#"{"success": true}"#) // Missing tunnel field
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        let res = client.request_tunnel("d1", None, None, None, None).await;
+        assert!(res.is_err());
+        assert!(res.err().unwrap().contains("Invalid response format"));
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_failure() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/heartbeat")
+            .with_status(404)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        assert!(client.send_heartbeat("d1").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_release_tunnel_failure() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/release")
+            .with_status(500)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        assert!(client.release_tunnel("d1").await.is_err());
+    }
 }

@@ -5,17 +5,29 @@ services:
       target: dev
     volumes:
       - .:/workspace
-      - ${CARGO_HOME_REGISTRY:-~/.cargo/registry}:/usr/local/cargo/registry
-      - ${CARGO_HOME_GIT:-~/.cargo/git}:/usr/local/cargo/git
-      - ${TARGET_DIR:-target-cache}:/workspace/target
-      - ${SCCACHE_CACHE_DIR:-sccache-cache}:/workspace/.sccache
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    tmpfs:
+      - /workspace/.sccache:size=512m,mode=1777
+      - /tmp:size=1g,mode=1777
     environment:
       - MT_TUNNEL_PORT=3000
       - SCCACHE_DIR=/workspace/.sccache
+      - RUSTC_WRAPPER=sccache
+      - CARGO_HOME=/usr/local/cargo
       - CLOUDFLARE_API_TOKEN
     stdin_open: true
     tty: true
+    shm_size: 2gb
+    cpu_shares: 1024
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "cargo", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
-  target-cache:
-  sccache-cache:
+  cargo-registry:
+  cargo-git:

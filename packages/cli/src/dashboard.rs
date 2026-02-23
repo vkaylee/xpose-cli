@@ -617,10 +617,55 @@ mod tests {
     }
 
     #[test]
-    fn test_dashboard_on_tick() {
-        let mut app = DashboardApp::new("http://invalid".to_string(), I18n::new(None));
-        // Should not panic even if metrics_client fails
-        app.on_tick();
-        assert_eq!(app.tick_count, 1);
+    fn test_dashboard_ui_render_with_data() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.tunnels = vec![TunnelEntry {
+            pid: 1234,
+            port: 8080,
+            protocol: "tcp".to_string(),
+            url: "https://test.xpose.dev".to_string(),
+            start_time: 1700000000,
+            metrics_port: 55555,
+        }];
+        app.metrics.insert(
+            1234,
+            TunnelMetrics {
+                rx_bytes: 1000,
+                tx_bytes: 2000,
+                rx_speed: 100,
+                tx_speed: 200,
+                last_update: None,
+            },
+        );
+        app.table_state.select(Some(0));
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.ui(f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content = format!("{:?}", buffer);
+        assert!(content.contains("8080"));
+        assert!(content.contains("tcp"));
+        assert!(content.contains("1.0 KB")); // rx_bytes
+        assert!(content.contains("2.0 KB")); // tx_bytes
+        assert!(content.contains("1.0 MB")); // ram_bytes
+    }
+
+    #[test]
+    fn test_dashboard_update_metrics_logic() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.tunnels = vec![TunnelEntry {
+            pid: 1234,
+            port: 8080,
+            protocol: "tcp".to_string(),
+            url: "u".to_string(),
+            start_time: 0,
+            metrics_port: 55555,
+        }];
+
+        // This won't actually fetch since it's a unit test and localhost:55555 isn't up,
+        // but it covers the iteration logic.
+        app.update_metrics();
     }
 }

@@ -275,4 +275,36 @@ mod tests {
         let path = config.bin_path.to_str().unwrap();
         assert!(path.contains("cloudflared"));
     }
+
+    #[test]
+    fn test_get_download_url() {
+        let url = get_download_url("test-release");
+        assert!(url.contains("test-release"));
+        assert!(
+            url.starts_with("https://github.com/cloudflare/cloudflared/releases/latest/download/")
+        );
+    }
+
+    #[test]
+    fn test_cloudflared_is_installed_logic() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bin_path = temp_dir.path().join("cloudflared");
+
+        let config = CloudflaredConfig {
+            bin_path: bin_path.clone(),
+        };
+
+        // Not installed yet
+        assert!(!config.is_installed());
+
+        // Create dummy bin
+        fs::write(&bin_path, "dummy").unwrap();
+        assert!(config.is_installed());
+    }
+
+    #[test]
+    fn test_get_release_name_unsupported() {
+        let res = get_release_name("unknown-os", "unknown-arch");
+        assert!(res.is_err());
+    }
 }

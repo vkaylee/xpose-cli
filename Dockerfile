@@ -9,68 +9,40 @@ FROM lukemathwalker/cargo-chef:latest-rust-1.93.1-slim-bookworm AS cacher
 WORKDIR /workspace
 COPY --from=planner /workspace/recipe.json recipe.json
 
-# Install build dependencies once
-RUN dpkg --add-architecture arm64 && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
-    libssl-dev \
-    musl-tools \
-    build-essential \
-    cmake \
-    curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev musl-tools build-essential cmake curl \
     gcc-aarch64-linux-gnu \
-    musl-dev:arm64 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo '#!/bin/sh' > /usr/bin/aarch64-linux-musl-gcc \
+    && echo 'exec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' >> /usr/bin/aarch64-linux-musl-gcc \
+    && chmod +x /usr/bin/aarch64-linux-musl-gcc \
+    && rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+    && cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json \
+    && cargo chef cook --release --recipe-path recipe.json
 
-# Create a proper cross-compilation wrapper for musl
-RUN echo '#!/bin/sh\nexec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' > /usr/bin/aarch64-linux-musl-gcc && \
-    chmod +x /usr/bin/aarch64-linux-musl-gcc
-
-# Pre-compile dependencies
-RUN rustup target add x86_64-unknown-linux-musl && \
-    rustup target add aarch64-unknown-linux-musl && \
-    cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
-
-# --- Stage 3: Developer Environment ---
-FROM rust:1.93.1-slim-bookworm AS dev
+# --- Stage 3: Base ---
+FROM rust:1.93.1-slim-bookworm AS base
 WORKDIR /workspace
-
-# Combine system dependencies and Node.js installation into a single optimized layer
-RUN dpkg --add-architecture arm64 && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    pkg-config \
-    libssl-dev \
-    musl-tools \
-    build-essential \
-    cmake \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git pkg-config libssl-dev musl-tools build-essential cmake \
     gcc-aarch64-linux-gnu \
-    musl-dev:arm64 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g wrangler@4 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo '#!/bin/sh' > /usr/bin/aarch64-linux-musl-gcc \
+    && echo 'exec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' >> /usr/bin/aarch64-linux-musl-gcc \
+    && chmod +x /usr/bin/aarch64-linux-musl-gcc \
+    && rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl wasm32-unknown-unknown \
+    && rustup component add rustfmt clippy \
+    && cargo install --locked sccache --version ^0.8 \
+    && cargo install --locked worker-build \
+    && cargo install --locked cargo-tarpaulin
 
-# Create a proper cross-compilation wrapper for musl (again for dev stage)
-RUN echo '#!/bin/sh\nexec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' > /usr/bin/aarch64-linux-musl-gcc && \
-    chmod +x /usr/bin/aarch64-linux-musl-gcc
-
-# Setup Rust components, sccache, and worker-build in one step
-RUN rustup target add x86_64-unknown-linux-musl && \
-    rustup target add aarch64-unknown-linux-musl && \
-    rustup target add wasm32-unknown-unknown && \
-    rustup component add rustfmt clippy && \
-    cargo install --locked sccache --version ^0.8 && \
-    cargo install --locked worker-build && \
-    cargo install --locked cargo-tarpaulin
-
-# Configure sccache
+# --- Stage 4: Dev ---
+FROM base AS dev
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/workspace/.sccache
-
-# Sync pre-compiled layers from cacher
 COPY --from=cacher /workspace/target /workspace/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-
+COPY --from=planner /workspace/recipe.json recipe.json
 CMD ["bash"]

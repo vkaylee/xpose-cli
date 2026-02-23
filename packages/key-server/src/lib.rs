@@ -62,7 +62,22 @@ pub const RECOMMENDED_VERSION: &str = "0.4.11";
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
 pub const BANNED_KEYWORDS: &[&str] = &[
-    "bank", "login", "facebook", "google", "paypal", "stripe", "admin", "secure",
+    "bank",
+    "login",
+    "facebook",
+    "google",
+    "paypal",
+    "stripe",
+    "admin",
+    "secure",
+    "microsoft",
+    "office",
+    "binance",
+    "coinbase",
+    "metamask",
+    "icloud",
+    "netflix",
+    "steam",
 ];
 pub const ALLOWED_PORTS: &[u16] = &[
     80, 443, 3000, 3001, 5000, 5173, 8000, 8008, 8080, 8443, 9000,
@@ -156,19 +171,30 @@ fn handle_index() -> Result<Response> {
     Response::ok(RUNNING_MESSAGE)
 }
 
-fn handle_config_api() -> Result<Response> {
-    Response::from_json(&ServerConfigResponse {
+pub fn get_server_config() -> ServerConfigResponse {
+    ServerConfigResponse {
         min_cli_version: MIN_CLI_VERSION.to_string(),
         recommended_version: RECOMMENDED_VERSION.to_string(),
-    })
+    }
+}
+
+fn handle_config_api() -> Result<Response> {
+    Response::from_json(&get_server_config())
+}
+
+pub fn is_authorized_admin(req: &Request, admin_secret: &str) -> bool {
+    let auth_header = match req.headers().get("Authorization") {
+        Ok(Some(h)) => h,
+        _ => return false,
+    };
+    let token = auth_header.replace("Bearer ", "");
+    token == admin_secret
 }
 
 async fn handle_admin_tunnels(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let admin_secret = ctx.env.var("ADMIN_SECRET")?.to_string();
-    let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
-    let token = auth_header.replace("Bearer ", "");
 
-    if token != admin_secret {
+    if !is_authorized_admin(&req, &admin_secret) {
         return json_error("Unauthorized", 401);
     }
 
@@ -246,15 +272,8 @@ async fn handle_auth_check(req: Request, ctx: RouteContext<()>) -> Result<Respon
     }
 }
 
-async fn handle_auth_verify_get(req: Request, _: RouteContext<()>) -> Result<Response> {
-    let url = req.url()?;
-    let session_id = url
-        .query_pairs()
-        .find(|(k, _)| k == "s")
-        .map(|(_, v)| v.to_string())
-        .unwrap_or_default();
-
-    let html = format!(
+pub fn get_verify_html(session_id: &str) -> String {
+    format!(
         r#"
                 <!DOCTYPE html>
                 <html>
@@ -283,8 +302,18 @@ async fn handle_auth_verify_get(req: Request, _: RouteContext<()>) -> Result<Res
                 </html>
             "#,
         session_id
-    );
+    )
+}
 
+async fn handle_auth_verify_get(req: Request, _: RouteContext<()>) -> Result<Response> {
+    let url = req.url()?;
+    let session_id = url
+        .query_pairs()
+        .find(|(k, _)| k == "s")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default();
+
+    let html = get_verify_html(&session_id);
     let headers = Headers::new();
     headers.set("Content-Type", "text/html")?;
     Ok(Response::ok(html)?.with_headers(headers))
@@ -576,7 +605,16 @@ mod tests {
     fn test_banned_keywords() {
         assert!(!is_safe_name("bank-login"));
         assert!(!is_safe_name("Google-Auth"));
+        assert!(!is_safe_name("PAYPAL-VERIFY"));
+        assert!(!is_safe_name("Microsoft-Office-365"));
+        assert!(!is_safe_name("binance-wallet"));
+        assert!(!is_safe_name("COINBASE-login"));
+        assert!(!is_safe_name("Metamask-Access"));
+        assert!(!is_safe_name("icloud-bypass"));
+        assert!(!is_safe_name("netflix-free"));
+        assert!(!is_safe_name("steam-gift-card"));
         assert!(is_safe_name("my-app-tunnel"));
+        assert!(is_safe_name("dev-box"));
     }
 
     #[test]
@@ -584,7 +622,11 @@ mod tests {
         assert!(is_port_allowed(80));
         assert!(is_port_allowed(443));
         assert!(is_port_allowed(3000));
-        assert!(!is_port_allowed(1234));
+        assert!(is_port_allowed(8080));
+        assert!(is_port_allowed(9000));
+        // Test defaults
+        assert!(!is_port_allowed(25));
+        assert!(!is_port_allowed(3306));
     }
 
     #[test]
@@ -613,5 +655,25 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"min_cli_version\":\"0.1.0\""));
+    }
+
+    #[test]
+    fn test_get_server_config_logic() {
+        let config = get_server_config();
+        assert_eq!(config.min_cli_version, MIN_CLI_VERSION);
+    }
+
+    /*
+       Note: is_authorized_admin test is hard without a mock Request
+       from the worker crate, so we skip it for now unless we add
+       more infra. We focus on pure functions.
+    */
+
+    #[test]
+    fn test_html_templates() {
+        let sid = "test-sid";
+        let html = get_verify_html(sid);
+        assert!(html.contains(sid));
+        assert!(html.contains("Confirm Connection"));
     }
 }

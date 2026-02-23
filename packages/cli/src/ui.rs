@@ -332,8 +332,30 @@ mod tests {
     #[test]
     fn test_ui_draw_qr_smoke() {
         let i18n = crate::i18n::I18n::new(None);
-        let ui = Ui::new_silent(i18n);
+        let ui = Ui::new_silent(i18n.clone());
         // This should not panic
         ui.draw_qr_auth("https://xpose.dev/auth/v1/test-session-id");
+    }
+
+    #[test]
+    fn test_ui_draw_panels_smoke() {
+        let i18n = crate::i18n::I18n::new(None);
+        let ui = Ui::new_silent(i18n.clone());
+
+        ui.draw_auth_panel();
+        ui.draw_connected_panel(8080, "https://test.xpose.dev", "tcp");
+
+        let mut ui_mut = Ui::new_silent(i18n.clone());
+        ui_mut.draw_live_metrics(1000, 2000, 100, 200, 10, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_ui_silent_mode_logic() {
+        let i18n = crate::i18n::I18n::new(None);
+        let ui_silent = Ui::new_silent(i18n.clone());
+        assert!(ui_silent.silent);
+
+        let ui_normal = Ui::new(i18n);
+        assert!(!ui_normal.silent);
     }
 }

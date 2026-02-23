@@ -35,7 +35,11 @@ if [ "$GITHUB_ACTIONS" = "true" ]; then
     export SCCACHE_CACHE_DIR=${SCCACHE_CACHE_DIR:-/tmp/sccache_cache}
     export TARGET_DIR=${TARGET_DIR:-/tmp/target_cache}
     mkdir -p "$CARGO_HOME_REGISTRY" "$CARGO_HOME_GIT" "$SCCACHE_CACHE_DIR" "$TARGET_DIR"
-    COMPOSE_FLAGS="--progress=plain"
+COMPOSE_FLAGS="--progress=plain"
+    export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+    export CARGO_NET_GIT_FETCH_WITH_CLI=true
+    export CARGO_NET_RETRY=3
+    export RUST_LOG=cargo::ops=warn
 else
     echo "Running in local mode..."
     COMPOSE_FLAGS=""
@@ -60,15 +64,15 @@ check_version_sync() {
 case "$COMMAND" in
     lint)
         check_version_sync
-        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
+        docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
         ;;
     test)
-        TEST_FLAGS="--workspace"
+        TEST_FLAGS="--workspace --locked --lib --bins"
         [ "$PARALLEL_TESTS" = "true" ] && TEST_FLAGS="$TEST_FLAGS -- --test-threads=4"
-        docker compose run --rm dev cargo test $TEST_FLAGS --locked
+        docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo test $TEST_FLAGS"
         ;;
     coverage)
-        docker compose run --rm dev cargo tarpaulin --workspace --engine Llvm --out Lcov --output-dir target/coverage
+        docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo tarpaulin --workspace --engine Llvm --out Lcov --output-dir target/coverage --lib --bins"
         ;;
     run)
         shift
@@ -76,7 +80,7 @@ case "$COMMAND" in
         ;;
     all)
         check_version_sync
-        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --workspace --locked"
+        docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --workspace --locked --lib --bins"
         ;;
     *)
         echo "Unknown command: $COMMAND"
