@@ -1,24 +1,23 @@
 #!/bin/bash
 set -e
 
-# --- Usage ---
 show_usage() {
     echo "Usage: ./run-in-docker.sh [command]"
     echo ""
     echo "Commands:"
-    echo "  lint    Run cargo fmt and clippy checks"
-    echo "  test    Run workspace unit tests"
-    echo "  coverage Run test coverage measurement (Tarpaulin)"
-    echo "  run     Run a custom command inside the container"
-    echo "  all     Run both lint and test (default)"
-    echo "  help    Show this help message"
+    echo "  lint       Run cargo fmt and clippy checks"
+    echo "  test       Run workspace unit tests"
+    echo "  coverage   Run test coverage measurement (Tarpaulin)"
+    echo "  run        Run a custom command inside the container"
+    echo "  all        Run both lint and test in single container (default)"
+    echo "  help       Show this help message"
     echo ""
     echo "Environment Variables:"
     echo "  GITHUB_ACTIONS=true    Enable CI-optimized output and caching"
-    echo "  NO_BUILD=true          Skip the build phase (useful if image is already built)"
+    echo "  NO_BUILD=true          Skip the build phase"
+    echo "  PARALLEL_TESTS=true   Run tests in parallel"
 }
 
-# --- Configuration ---
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
@@ -29,9 +28,8 @@ if [[ "$COMMAND" == "help" || "$COMMAND" == "--help" || "$COMMAND" == "-h" ]]; t
     exit 0
 fi
 
-# Detect CI Environment
 if [ "$GITHUB_ACTIONS" = "true" ]; then
-    echo "👷 Running in CI mode..."
+    echo "Running in CI mode..."
     export CARGO_HOME_REGISTRY=${CARGO_HOME_REGISTRY:-/tmp/cargo_registry}
     export CARGO_HOME_GIT=${CARGO_HOME_GIT:-/tmp/cargo_git}
     export SCCACHE_CACHE_DIR=${SCCACHE_CACHE_DIR:-/tmp/sccache_cache}
@@ -39,75 +37,56 @@ if [ "$GITHUB_ACTIONS" = "true" ]; then
     mkdir -p "$CARGO_HOME_REGISTRY" "$CARGO_HOME_GIT" "$SCCACHE_CACHE_DIR" "$TARGET_DIR"
     COMPOSE_FLAGS="--progress=plain"
 else
-    echo "🏠 Running in local mode..."
+    echo "Running in local mode..."
     COMPOSE_FLAGS=""
 fi
 
 if [ "$NO_BUILD" != "true" ] && [ "$SKIP_BUILD" != "true" ]; then
-    echo "🐳 Building Docker image via Compose..."
+    echo "Building Docker image via Compose..."
     docker compose build $COMPOSE_FLAGS dev
 fi
 
+check_version_sync() {
+    PKG_VERSION=$(grep '"version":' packages/cli/package.json | head -n 1 | cut -d '"' -f 4)
+    CARGO_VERSION=$(grep '^version =' packages/cli/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+    
+    if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
+        echo "Version mismatch: package.json=$PKG_VERSION, Cargo.toml=$CARGO_VERSION"
+        exit 1
+    fi
+    echo "Versions match ($PKG_VERSION)."
+}
+
 case "$COMMAND" in
     lint)
-        echo "🧐 Checking Version Sync..."
-        PKG_VERSION=$(grep '"version":' packages/cli/package.json | head -n 1 | cut -d '"' -f 4)
-        CARGO_VERSION=$(grep '^version =' packages/cli/Cargo.toml | head -n 1 | cut -d '"' -f 2)
-        
-        if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "❌ Version mismatch detected!"
-            echo "package.json: $PKG_VERSION"
-            echo "Cargo.toml: $CARGO_VERSION"
-            exit 1
-        fi
-        echo "✅ Versions match ($PKG_VERSION)."
-
-        echo "🦀 Running Lint & Format in Docker..."
+        check_version_sync
         docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
         ;;
     test)
-        echo "🧪 Running Tests in Docker..."
-        docker compose run --rm dev cargo test --workspace
+        TEST_FLAGS="--workspace"
+        [ "$PARALLEL_TESTS" = "true" ] && TEST_FLAGS="$TEST_FLAGS -- --test-threads=4"
+        docker compose run --rm dev cargo test $TEST_FLAGS --locked
         ;;
     coverage)
-        echo "📊 Running Coverage Measurement in Docker..."
         docker compose run --rm dev cargo tarpaulin --workspace --engine Llvm --out Lcov --output-dir target/coverage
         ;;
     run)
         shift
-        echo "🏃 Running custom command in Docker: $*"
         docker compose run --rm dev "$@"
         ;;
     all)
-        echo "🧐 Checking Version Sync..."
-        PKG_VERSION=$(grep '"version":' packages/cli/package.json | head -n 1 | cut -d '"' -f 4)
-        CARGO_VERSION=$(grep '^version =' packages/cli/Cargo.toml | head -n 1 | cut -d '"' -f 2)
-        
-        if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "❌ Version mismatch detected!"
-            echo "package.json: $PKG_VERSION"
-            echo "Cargo.toml: $CARGO_VERSION"
-            exit 1
-        fi
-        echo "✅ Versions match ($PKG_VERSION)."
-
-        echo "🦀 Running Lint & Format in Docker..."
-        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings"
-        echo "🧪 Running Tests in Docker..."
-        docker compose run --rm dev cargo test --workspace --locked
+        check_version_sync
+        docker compose run --rm dev bash -c "cargo check --locked && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --workspace --locked"
         ;;
     *)
-        echo "❌ Unknown command: $COMMAND"
+        echo "Unknown command: $COMMAND"
         show_usage
         exit 1
         ;;
 esac
 
 if [ "$GITHUB_ACTIONS" = "true" ]; then
-    echo "🧹 Correcting permissions for CI cache..."
-    # The container runs as root, but host needs access to files for caching
-    # We use a temporary container to fix permissions of the mounted volumes
-    docker compose run --rm --entrypoint chown dev -R $(id -u):$(id -g) /usr/local/cargo/registry /usr/local/cargo/git /workspace/target /workspace/.sccache
+    docker compose run --rm --entrypoint chown dev -R $(id -u):$(id -g) /usr/local/cargo/registry /usr/local/cargo/git /workspace/target /workspace/.sccache 2>/dev/null || true
 fi
 
-echo "✨ Checks completed successfully in the Docker environment!"
+echo "Done!"
