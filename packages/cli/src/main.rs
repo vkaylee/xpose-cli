@@ -1090,7 +1090,7 @@ mod tests {
 
         let api = ApiClient::new(url);
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
         assert!(res.is_ok());
         let info = res.unwrap();
@@ -1110,7 +1110,7 @@ mod tests {
 
         let api = ApiClient::new(url);
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
         assert!(res.is_err());
         mock.assert_async().await;
@@ -1130,7 +1130,7 @@ mod tests {
 
         let api = ApiClient::new(url);
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         assert!(handle_update(&api, &ui, &i18n, false).await.is_ok());
         mock.assert_async().await;
     }
@@ -1140,7 +1140,7 @@ mod tests {
         let args = Args::parse_from(["xpose", "config", "get", "server_url"]);
         let config = XposeConfig::default();
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 0);
     }
@@ -1150,7 +1150,7 @@ mod tests {
         let args = Args::parse_from(["xpose", "config", "set", "lang", "en"]);
         let config = XposeConfig::default();
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 0);
     }
@@ -1170,7 +1170,7 @@ mod tests {
         let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
         let config = XposeConfig::default();
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 0);
     }
@@ -1180,7 +1180,7 @@ mod tests {
         let args = Args::parse_from(["xpose"]);
         let config = XposeConfig::default();
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         // This will return 1 because it'll fail at port detection or other setup in test env
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 1);
@@ -1199,7 +1199,7 @@ mod tests {
         let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
         let config = XposeConfig::default();
         let i18n = i18n::I18n::new(None);
-        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 1);
     }

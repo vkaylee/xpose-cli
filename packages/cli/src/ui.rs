@@ -9,6 +9,7 @@ pub struct Ui {
     term: Term,
     metrics_history: Vec<u64>,
     pub i18n: I18n,
+    pub silent: bool,
 }
 
 impl Ui {
@@ -17,10 +18,24 @@ impl Ui {
             term: Term::stdout(),
             metrics_history: Vec::with_capacity(20),
             i18n,
+            silent: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn new_silent(i18n: I18n) -> Self {
+        Self {
+            term: Term::stdout(),
+            metrics_history: Vec::with_capacity(20),
+            i18n,
+            silent: true,
         }
     }
 
     pub fn create_spinner(&self, message: &str) -> ProgressBar {
+        if self.silent {
+            return ProgressBar::hidden();
+        }
         let pb = ProgressBar::new_spinner();
         pb.enable_steady_tick(Duration::from_millis(120));
         pb.set_style(
@@ -33,24 +48,36 @@ impl Ui {
     }
 
     pub fn success(&self, msg: &str) {
+        if self.silent {
+            return;
+        }
         let _ = self
             .term
             .write_line(&format!("{} {}", style("✓").green().bold(), msg));
     }
 
     pub fn error(&self, msg: &str) {
+        if self.silent {
+            return;
+        }
         let _ = self
             .term
             .write_line(&format!("{} {}", style("✗").red().bold(), msg));
     }
 
     pub fn info(&self, msg: &str) {
+        if self.silent {
+            return;
+        }
         let _ = self
             .term
             .write_line(&format!("{} {}", style("i").cyan().bold(), msg));
     }
 
     pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str) {
+        if self.silent {
+            return;
+        }
         let i18n = &self.i18n;
         println!();
         println!(
@@ -108,6 +135,9 @@ impl Ui {
     }
 
     pub fn draw_auth_panel(&self) {
+        if self.silent {
+            return;
+        }
         println!();
         println!(
             "  {} {}",
@@ -125,6 +155,9 @@ impl Ui {
     }
 
     fn draw_qr(&self, data: &str, label: &str) {
+        if self.silent {
+            return;
+        }
         if let Ok(code) = QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L) {
             let width = code.width();
             let _ = self
@@ -164,6 +197,9 @@ impl Ui {
         ping_ms: u64,
         ram_bytes: u64,
     ) {
+        if self.silent {
+            return;
+        }
         let _ = self.term.clear_line();
 
         // Update history for sparkline
@@ -281,7 +317,7 @@ mod tests {
     #[test]
     fn test_ui_drawing_methods_smoke() {
         let i18n = crate::i18n::I18n::new(None);
-        let mut ui = Ui::new(i18n);
+        let mut ui = Ui::new_silent(i18n);
 
         // Smoke tests for drawing methods (ensure no panic)
         ui.success("testing success");
@@ -296,7 +332,7 @@ mod tests {
     #[test]
     fn test_ui_draw_qr_smoke() {
         let i18n = crate::i18n::I18n::new(None);
-        let ui = Ui::new(i18n);
+        let ui = Ui::new_silent(i18n);
         // This should not panic
         ui.draw_qr_auth("https://xpose.dev/auth/v1/test-session-id");
     }
