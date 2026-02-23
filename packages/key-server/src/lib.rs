@@ -136,80 +136,126 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     let router = Router::new();
 
     router
-        .get("/", |_, _| Response::ok(RUNNING_MESSAGE))
-        .get("/api/config", |_, _| {
-            Response::from_json(&serde_json::json!({
-                "min_cli_version": MIN_CLI_VERSION,
-                "recommended_version": RECOMMENDED_VERSION
-            }))
-        })
-        .post_async("/admin/tunnels", |mut req, ctx| async move {
-            let admin_secret = ctx.env.var("ADMIN_SECRET")?.to_string();
-            let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
-            let token = auth_header.replace("Bearer ", "");
+        .get("/", |_, _| handle_index())
+        .get("/api/config", |_, _| handle_config_api())
+        .post_async("/admin/tunnels", handle_admin_tunnels)
+        .post_async("/api/auth/init", handle_auth_init)
+        .get_async("/api/auth/check", handle_auth_check)
+        .get_async("/api/auth/verify", handle_auth_verify_get)
+        .post_async("/api/auth/verify", handle_auth_verify_post)
+        .post_async("/api/request", handle_request_tunnel)
+        .post_async("/api/heartbeat", handle_heartbeat)
+        .post_async("/api/release", handle_release)
+        .get_async("/api/stats", handle_stats)
+        .post_async("/api/telemetry", handle_telemetry)
+        .run(req, env)
+        .await
+}
 
-            if token != admin_secret {
-                return json_error("Unauthorized", 401);
-            }
+fn handle_index() -> Result<Response> {
+    Response::ok(RUNNING_MESSAGE)
+}
 
-            let body: AddTunnelRequest = req.json().await?;
+fn handle_config_api() -> Result<Response> {
+    Response::from_json(&ServerConfigResponse {
+        min_cli_version: MIN_CLI_VERSION.to_string(),
+        recommended_version: RECOMMENDED_VERSION.to_string(),
+    })
+}
 
-            // Keyword filtering for admin too
-            if !is_safe_name(&body.name) {
-                return json_error("Prohibited keyword in tunnel name", 400);
-            }
+async fn handle_admin_tunnels(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let admin_secret = ctx.env.var("ADMIN_SECRET")?.to_string();
+    let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
+    let token = auth_header.replace("Bearer ", "");
 
-            let db = ctx.env.d1("DB")?;
-            let result = db.prepare("INSERT INTO tunnels (id, name, token, status) VALUES (?, ?, ?, 'AVAILABLE')")
-                .bind(&[body.id.into(), body.name.into(), body.token.into()])?
-                .run()
-                .await;
+    if token != admin_secret {
+        return json_error("Unauthorized", 401);
+    }
 
-            match result {
-                Ok(_) => Response::from_json(&serde_json::json!({"success": true, "message": "Tunnel added"})),
-                Err(e) => json_error(format!("Database error: {e}"), 500),
-            }
-        })
-        .post_async("/api/auth/init", |req, ctx| async move {
-            let db = ctx.env.d1("DB")?;
-            let session_id = uuid::Uuid::new_v4().to_string();
-            let auth_token = uuid::Uuid::new_v4().to_string();
+    let body: AddTunnelRequest = req.json().await?;
 
-            db.prepare("INSERT INTO auth_sessions (id, auth_token, status) VALUES (?, ?, 'PENDING')")
-                .bind(&[session_id.clone().into(), auth_token.clone().into()])?
-                .run()
-                .await?;
+    // Keyword filtering for admin too
+    if !is_safe_name(&body.name) {
+        return json_error("Prohibited keyword in tunnel name", 400);
+    }
 
-            let url = req.url()?;
-            let verify_url = format!("{}://{}/api/auth/verify?s={}", url.scheme(), url.host_str().unwrap_or("localhost"), session_id);
+    let db = ctx.env.d1("DB")?;
+    let result = db
+        .prepare("INSERT INTO tunnels (id, name, token, status) VALUES (?, ?, ?, 'AVAILABLE')")
+        .bind(&[body.id.into(), body.name.into(), body.token.into()])?
+        .run()
+        .await;
 
-            Response::from_json(&AuthInitResponse {
-                session_id,
-                auth_token,
-                verify_url,
-            })
-        })
-        .get_async("/api/auth/check", |req, ctx| async move {
-            let url = req.url()?;
-            let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
-            let auth_token = url.query_pairs().find(|(k, _)| k == "t").map(|(_, v)| v.to_string()).unwrap_or_default();
+    match result {
+        Ok(_) => Response::from_json(&serde_json::json!({
+            "success": true,
+            "message": "Tunnel added"
+        })),
+        Err(e) => json_error(format!("Database error: {e}"), 500),
+    }
+}
 
-            let db = ctx.env.d1("DB")?;
-            let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ?")
-                .bind(&[session_id.into(), auth_token.into()])?
-                .first::<AuthSession>(None)
-                .await?;
+async fn handle_auth_init(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let db = ctx.env.d1("DB")?;
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let auth_token = uuid::Uuid::new_v4().to_string();
 
-            match session {
-                Some(s) => Response::from_json(&serde_json::json!({ "status": s.status })),
-                None => json_error("Session not found", 404),
-            }
-        })
-        .get_async("/api/auth/verify", |req, _| async move {
-            let url = req.url()?;
-            let session_id = url.query_pairs().find(|(k, _)| k == "s").map(|(_, v)| v.to_string()).unwrap_or_default();
+    db.prepare("INSERT INTO auth_sessions (id, auth_token, status) VALUES (?, ?, 'PENDING')")
+        .bind(&[session_id.clone().into(), auth_token.clone().into()])?
+        .run()
+        .await?;
 
-            let html = format!(r#"
+    let url = req.url()?;
+    let verify_url = format!(
+        "{}://{}/api/auth/verify?s={}",
+        url.scheme(),
+        url.host_str().unwrap_or("localhost"),
+        session_id
+    );
+
+    Response::from_json(&AuthInitResponse {
+        session_id,
+        auth_token,
+        verify_url,
+    })
+}
+
+async fn handle_auth_check(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let url = req.url()?;
+    let session_id = url
+        .query_pairs()
+        .find(|(k, _)| k == "s")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default();
+    let auth_token = url
+        .query_pairs()
+        .find(|(k, _)| k == "t")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default();
+
+    let db = ctx.env.d1("DB")?;
+    let session: Option<AuthSession> = db
+        .prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ?")
+        .bind(&[session_id.into(), auth_token.into()])?
+        .first::<AuthSession>(None)
+        .await?;
+
+    match session {
+        Some(s) => Response::from_json(&serde_json::json!({ "status": s.status })),
+        None => json_error("Session not found", 404),
+    }
+}
+
+async fn handle_auth_verify_get(req: Request, _: RouteContext<()>) -> Result<Response> {
+    let url = req.url()?;
+    let session_id = url
+        .query_pairs()
+        .find(|(k, _)| k == "s")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default();
+
+    let html = format!(
+        r#"
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -235,26 +281,32 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                     </div>
                 </body>
                 </html>
-            "#, session_id);
+            "#,
+        session_id
+    );
 
-            let headers = Headers::new();
-            headers.set("Content-Type", "text/html")?;
-            Ok(Response::ok(html)?.with_headers(headers))
+    let headers = Headers::new();
+    headers.set("Content-Type", "text/html")?;
+    Ok(Response::ok(html)?.with_headers(headers))
+}
+
+async fn handle_auth_verify_post(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let form = req.form_data().await?;
+    let session_id = form
+        .get("s")
+        .and_then(|e| match e {
+            FormEntry::Field(f) => Some(f),
+            _ => None,
         })
-        .post_async("/api/auth/verify", |mut req, ctx| async move {
-            let form = req.form_data().await?;
-            let session_id = form.get("s").and_then(|e| match e {
-                FormEntry::Field(f) => Some(f),
-                _ => None
-            }).unwrap_or_default();
+        .unwrap_or_default();
 
-            let db = ctx.env.d1("DB")?;
-            db.prepare("UPDATE auth_sessions SET status = 'VERIFIED' WHERE id = ? AND status = 'PENDING'")
-                .bind(&[session_id.into()])?
-                .run()
-                .await?;
+    let db = ctx.env.d1("DB")?;
+    db.prepare("UPDATE auth_sessions SET status = 'VERIFIED' WHERE id = ? AND status = 'PENDING'")
+        .bind(&[session_id.into()])?
+        .run()
+        .await?;
 
-            let html = r#"
+    let html = r#"
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -273,164 +325,178 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 </body>
                 </html>
             "#;
-            let headers = Headers::new();
-            headers.set("Content-Type", "text/html")?;
-            Ok(Response::ok(html)?.with_headers(headers))
-        })
-        .post_async("/api/request", |mut req, ctx| async move {
-            let ip = req.headers().get("cf-connecting-ip")?.unwrap_or_else(|| "unknown".to_string());
-            let db = ctx.env.d1("DB")?;
+    let headers = Headers::new();
+    headers.set("Content-Type", "text/html")?;
+    Ok(Response::ok(html)?.with_headers(headers))
+}
 
-            if !check_rate_limit(&db, &ip).await? {
-                return json_error("Too many requests. Please wait a minute.", 429);
-            }
+async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let ip = req
+        .headers()
+        .get("cf-connecting-ip")?
+        .unwrap_or_else(|| "unknown".to_string());
+    let db = ctx.env.d1("DB")?;
 
-            let body: RequestTunnelRequest = req.json().await?;
+    if !check_rate_limit(&db, &ip).await? {
+        return json_error("Too many requests. Please wait a minute.", 429);
+    }
 
-            // QR Auth Check (Optional for regular usage, but validated if provided)
-            if let (Some(sid), Some(token)) = (body.session_id, body.auth_token) {
-                let session: Option<AuthSession> = db.prepare("SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ? AND status = 'VERIFIED'")
-                    .bind(&[sid.clone().into(), token.into()])?
-                    .first::<AuthSession>(None)
-                    .await?;
+    let body: RequestTunnelRequest = req.json().await?;
 
-                if session.is_none() {
-                    return json_error("Session not verified or invalid", 401);
-                }
+    // QR Auth Check
+    if let (Some(sid), Some(token)) = (body.session_id, body.auth_token) {
+        let session: Option<AuthSession> = db
+            .prepare(
+                "SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ? AND status = 'VERIFIED'",
+            )
+            .bind(&[sid.clone().into(), token.into()])?
+            .first::<AuthSession>(None)
+            .await?;
 
-                // Mark session as USED
-                db.prepare("UPDATE auth_sessions SET status = 'USED' WHERE id = ?")
-                    .bind(&[sid.into()])?
-                    .run()
-                    .await?;
-            }
+        if session.is_none() {
+            return json_error("Session not verified or invalid", 401);
+        }
 
-            // Port restriction
-            if let Some(p) = body.port {
-                if !ALLOWED_PORTS.contains(&p) {
-                    return json_error(format!("Port {p} is restricted for security reasons."), 403);
-                }
-            }
+        // Mark session as USED
+        db.prepare("UPDATE auth_sessions SET status = 'USED' WHERE id = ?")
+            .bind(&[sid.into()])?
+            .run()
+            .await?;
+    }
 
-            let now = (Date::now().as_millis() / 1000) as i64;
+    // Port restriction
+    if let Some(p) = body.port {
+        if !ALLOWED_PORTS.contains(&p) {
+            return json_error(format!("Port {p} is restricted for security reasons."), 403);
+        }
+    }
 
-            // 1. Check if device already has a busy tunnel
-            let existing: Option<Tunnel> = db.prepare("SELECT * FROM tunnels WHERE status = 'BUSY' AND device_id = ?")
-                .bind(&[body.device_id.clone().into()])?
-                .first::<Tunnel>(None)
-                .await?;
+    let now = (Date::now().as_millis() / 1000) as i64;
 
-            if let Some(t) = existing {
-                db.prepare("UPDATE tunnels SET last_heartbeat = ?, port = ?, protocol = ? WHERE id = ?")
-                    .bind(&[
-                        now.into(),
-                        body.port.unwrap_or(t.port.unwrap_or(0)).into(),
-                        body.protocol.unwrap_or(t.protocol.unwrap_or_else(|| "tcp".to_string())).into(),
-                        t.id.clone().into()
-                    ])?
-                    .run()
-                    .await?;
+    // 1. Check if device already has a busy tunnel
+    let existing: Option<Tunnel> = db
+        .prepare("SELECT * FROM tunnels WHERE status = 'BUSY' AND device_id = ?")
+        .bind(&[body.device_id.clone().into()])?
+        .first::<Tunnel>(None)
+        .await?;
 
-                return Response::from_json(&serde_json::json!({
-                    "success": true,
-                    "message": "Reconnected",
-                    "tunnel": { "id": t.id, "name": t.name, "token": t.token }
-                }));
-            }
+    if let Some(t) = existing {
+        db.prepare("UPDATE tunnels SET last_heartbeat = ?, port = ?, protocol = ? WHERE id = ?")
+            .bind(&[
+                now.into(),
+                body.port.unwrap_or(t.port.unwrap_or(0)).into(),
+                body.protocol
+                    .unwrap_or(t.protocol.unwrap_or_else(|| "tcp".to_string()))
+                    .into(),
+                t.id.clone().into(),
+            ])?
+            .run()
+            .await?;
 
-            // 2. Find available tunnel
-            let available: Option<Tunnel> = db.prepare("SELECT * FROM tunnels WHERE status = 'AVAILABLE' LIMIT 1")
-                .first::<Tunnel>(None)
-                .await?;
+        return Response::from_json(&serde_json::json!({
+            "success": true,
+            "message": "Reconnected",
+            "tunnel": { "id": t.id, "name": t.name, "token": t.token }
+        }));
+    }
 
-            match available {
-                Some(t) => {
-                    let res = db.prepare("UPDATE tunnels SET status = 'BUSY', device_id = ?, port = ?, protocol = ?, last_heartbeat = ?, created_at = ? WHERE id = ? AND status = 'AVAILABLE'")
-                        .bind(&[
-                            body.device_id.into(),
-                            body.port.into(),
-                            body.protocol.unwrap_or_else(|| "tcp".to_string()).into(),
-                            now.into(),
-                            now.into(),
-                            t.id.clone().into()
-                        ])?
-                        .run()
-                        .await?;
+    // 2. Find available tunnel
+    let available: Option<Tunnel> = db
+        .prepare("SELECT * FROM tunnels WHERE status = 'AVAILABLE' LIMIT 1")
+        .first::<Tunnel>(None)
+        .await?;
 
-                    let changes = res.meta()?.and_then(|m| m.changes).unwrap_or(0);
-                    if changes > 0 {
-                        Response::from_json(&serde_json::json!({
-                            "success": true,
-                            "tunnel": { "id": t.id, "name": t.name, "token": t.token }
-                        }))
-                    } else {
-                        json_error("Collision, please retry", 409)
-                    }
-                }
-                None => json_error("No tunnels available", 503)
-            }
-        })
-        .post_async("/api/heartbeat", |mut req, ctx| async move {
-            let body: DeviceRequest = req.json().await?;
-            let db = ctx.env.d1("DB")?;
-            let now = (Date::now().as_millis() / 1000) as i64;
-
-            let res = db.prepare("UPDATE tunnels SET last_heartbeat = ? WHERE device_id = ? AND status = 'BUSY'")
-                .bind(&[now.into(), body.device_id.into()])?
+    match available {
+        Some(t) => {
+            let res = db.prepare("UPDATE tunnels SET status = 'BUSY', device_id = ?, port = ?, protocol = ?, last_heartbeat = ?, created_at = ? WHERE id = ? AND status = 'AVAILABLE'")
+                .bind(&[
+                    body.device_id.into(),
+                    body.port.into(),
+                    body.protocol.unwrap_or_else(|| "tcp".to_string()).into(),
+                    now.into(),
+                    now.into(),
+                    t.id.clone().into()
+                ])?
                 .run()
                 .await?;
 
             let changes = res.meta()?.and_then(|m| m.changes).unwrap_or(0);
             if changes > 0 {
-                Response::from_json(&serde_json::json!({"success": true, "timestamp": now}))
+                Response::from_json(&serde_json::json!({
+                    "success": true,
+                    "tunnel": { "id": t.id, "name": t.name, "token": t.token }
+                }))
             } else {
-                json_error("No active session", 404)
+                json_error("Collision, please retry", 409)
             }
-        })
-        .post_async("/api/release", |mut req, ctx| async move {
-            let body: DeviceRequest = req.json().await?;
-            let db = ctx.env.d1("DB")?;
+        }
+        None => json_error("No tunnels available", 503),
+    }
+}
 
-            db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE device_id = ? AND status = 'BUSY'")
-                .bind(&[body.device_id.into()])?
-                .run()
-                .await?;
+async fn handle_heartbeat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let body: DeviceRequest = req.json().await?;
+    let db = ctx.env.d1("DB")?;
+    let now = (Date::now().as_millis() / 1000) as i64;
 
-            Response::from_json(&serde_json::json!({"success": true}))
-        })
-        .get_async("/api/stats", |_, ctx| async move {
-            let db = ctx.env.d1("DB")?;
-            let res = db.prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
-                .all()
-                .await?;
+    let res = db
+        .prepare("UPDATE tunnels SET last_heartbeat = ? WHERE device_id = ? AND status = 'BUSY'")
+        .bind(&[now.into(), body.device_id.into()])?
+        .run()
+        .await?;
 
-            let mut busy = 0;
-            let mut available = 0;
+    let changes = res.meta()?.and_then(|m| m.changes).unwrap_or(0);
+    if changes > 0 {
+        Response::from_json(&serde_json::json!({"success": true, "timestamp": now}))
+    } else {
+        json_error("No active session", 404)
+    }
+}
 
-            let rows: Vec<serde_json::Value> = res.results()?;
-            for row in rows {
-                let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                let count = row.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                if status == "BUSY" {
-                    busy = count;
-                } else if status == "AVAILABLE" {
-                    available = count;
-                }
-            }
+async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let body: DeviceRequest = req.json().await?;
+    let db = ctx.env.d1("DB")?;
 
-            Response::from_json(&serde_json::json!({
-                "total": busy + available,
-                "busy": busy,
-                "available": available
-            }))
-        })
-        .post_async("/api/telemetry", |mut req, _ctx| async move {
-            let body: serde_json::Value = req.json().await?;
-            console_log!("[Telemetry] Received report: {:?}", body);
-            Response::ok("Report received")
-        })
-        .run(req, env)
-        .await
+    db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE device_id = ? AND status = 'BUSY'")
+        .bind(&[body.device_id.into()])?
+        .run()
+        .await?;
+
+    Response::from_json(&serde_json::json!({"success": true}))
+}
+
+async fn handle_stats(_: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let db = ctx.env.d1("DB")?;
+    let res = db
+        .prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
+        .all()
+        .await?;
+
+    let mut busy = 0;
+    let mut available = 0;
+
+    let rows: Vec<serde_json::Value> = res.results()?;
+    for row in rows {
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let count = row.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        if status == "BUSY" {
+            busy = count;
+        } else if status == "AVAILABLE" {
+            available = count;
+        }
+    }
+
+    Response::from_json(&serde_json::json!({
+        "total": busy + available,
+        "busy": busy,
+        "available": available
+    }))
+}
+
+async fn handle_telemetry(mut req: Request, _: RouteContext<()>) -> Result<Response> {
+    let body: serde_json::Value = req.json().await?;
+    console_log!("[Telemetry] Received report: {:?}", body);
+    Response::ok("Report received")
 }
 
 #[event(scheduled)]
@@ -473,14 +539,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_port_allowed() {
-        assert!(is_port_allowed(80));
-        assert!(is_port_allowed(3000));
-        assert!(!is_port_allowed(22));
-        assert!(!is_port_allowed(3306));
-    }
-
-    #[test]
     fn test_serialization() {
         let tunnel = Tunnel {
             id: "t1".to_string(),
@@ -502,5 +560,58 @@ mod tests {
     fn test_constants() {
         assert_eq!(MIN_CLI_VERSION, "0.4.11");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
+    }
+
+    #[test]
+    fn test_api_responses() {
+        let config = ServerConfigResponse {
+            min_cli_version: MIN_CLI_VERSION.to_string(),
+            recommended_version: RECOMMENDED_VERSION.to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("min_cli_version"));
+    }
+
+    #[test]
+    fn test_banned_keywords() {
+        assert!(!is_safe_name("bank-login"));
+        assert!(!is_safe_name("Google-Auth"));
+        assert!(is_safe_name("my-app-tunnel"));
+    }
+
+    #[test]
+    fn test_is_port_allowed() {
+        assert!(is_port_allowed(80));
+        assert!(is_port_allowed(443));
+        assert!(is_port_allowed(3000));
+        assert!(!is_port_allowed(1234));
+    }
+
+    #[test]
+    fn test_is_safe_name() {
+        assert!(is_safe_name("my-tunnel"));
+        assert!(!is_safe_name("my-admin-panel"));
+        assert!(!is_safe_name("bank-secure"));
+    }
+
+    #[test]
+    fn test_dto_serialization() {
+        let resp = AuthInitResponse {
+            session_id: "s1".to_string(),
+            auth_token: "t1".to_string(),
+            verify_url: "http://test".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"session_id\":\"s1\""));
+    }
+
+    #[test]
+    fn test_server_config_response() {
+        let resp = ServerConfigResponse {
+            min_cli_version: "0.1.0".to_string(),
+            recommended_version: "0.2.0".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"min_cli_version\":\"0.1.0\""));
     }
 }

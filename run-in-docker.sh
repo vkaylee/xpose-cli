@@ -8,6 +8,7 @@ show_usage() {
     echo "Commands:"
     echo "  lint    Run cargo fmt and clippy checks"
     echo "  test    Run workspace unit tests"
+    echo "  coverage Run test coverage measurement (Tarpaulin)"
     echo "  run     Run a custom command inside the container"
     echo "  all     Run both lint and test (default)"
     echo "  help    Show this help message"
@@ -67,6 +68,10 @@ case "$COMMAND" in
     test)
         echo "🧪 Running Tests in Docker..."
         docker compose run --rm dev cargo test --workspace
+        ;;
+    coverage)
+        echo "📊 Running Coverage Measurement in Docker..."
+        docker compose run --rm dev cargo tarpaulin --workspace --engine Llvm --out Lcov --output-dir target/coverage
         ;;
     run)
         shift

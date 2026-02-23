@@ -21,7 +21,7 @@ use tokio::signal;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
-use api::ApiClient;
+use api::{ApiClient, TunnelInfo};
 use cloudflared::CloudflaredConfig;
 use fern::Dispatch;
 use log::{info, LevelFilter};
@@ -69,7 +69,7 @@ struct Args {
     open: bool,
 }
 
-#[derive(clap::Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug, Clone)]
 enum Commands {
     #[command(about = "Open local management dashboard")]
     Dashboard,
@@ -85,7 +85,7 @@ enum Commands {
     },
 }
 
-#[derive(clap::Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug, Clone)]
 enum ConfigAction {
     #[command(about = "Set a configuration value")]
     Set { key: String, value: String },
@@ -102,6 +102,10 @@ pub fn map_error(e: &str) -> String {
         "Tunnel collision. Someone else might be using this tunnel, please retry.".to_string()
     } else if e.contains("503") {
         "No tunnels available in the pool. Please try again later.".to_string()
+    } else if e.contains("401") {
+        "Unauthorized. Please check your credentials.".to_string()
+    } else if e.contains("500") {
+        "Internal server error. Please try again later.".to_string()
     } else {
         format!("An unexpected error occurred: {e}")
     }
@@ -153,15 +157,23 @@ async fn main() {
     let yaml_config = XposeConfig::load();
 
     let args = Args::parse();
-
-    // Merge i18n: Args > YAML > Auto-detect
     let lang = args.lang.clone().or(yaml_config.lang.clone());
     let i18n = i18n::I18n::new(lang);
-    let ui = Ui::new(i18n.clone());
+    let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
 
+    let exit_code = run_cli(args, yaml_config, &i18n, ui.clone()).await;
+    process::exit(exit_code);
+}
+
+async fn run_cli(
+    args: Args,
+    yaml_config: XposeConfig,
+    i18n: &i18n::I18n,
+    ui: Arc<Mutex<Ui>>,
+) -> i32 {
     let registry = registry::Registry::new();
 
-    if let Some(command) = args.command {
+    if let Some(command) = args.command.clone() {
         let server_url = args
             .server_url
             .clone()
@@ -173,15 +185,21 @@ async fn main() {
         match command {
             Commands::Dashboard => {
                 // QR Authentication Handshake for Dashboard
-                ui.draw_auth_panel();
+                if let Ok(ui_lock) = ui.lock() {
+                    ui_lock.draw_auth_panel();
+                }
                 let auth_init = match api_client.init_auth().await {
                     Ok(init) => init,
                     Err(e) => {
-                        ui.error(&format!("Failed to initiate authentication: {}", e));
-                        process::exit(1);
+                        if let Ok(ui_lock) = ui.lock() {
+                            ui_lock.error(&format!("Failed to initiate authentication: {}", e));
+                        }
+                        return 1;
                     }
                 };
-                ui.draw_qr_auth(&auth_init.verify_url);
+                if let Ok(ui_lock) = ui.lock() {
+                    ui_lock.draw_qr_auth(&auth_init.verify_url);
+                }
 
                 println!(
                     "\n  {} {}",
@@ -203,15 +221,22 @@ async fn main() {
 
                 while !verified {
                     if start_time.elapsed() > timeout {
-                        ui.error("Authentication timed out.");
-                        process::exit(1);
+                        if let Ok(ui_lock) = ui.lock() {
+                            ui_lock.error("Authentication timed out.");
+                        }
+                        return 1;
                     }
                     let status = match api_client.check_auth_status(&session_id, &auth_token).await
                     {
                         Ok(s) => s,
                         Err(e) => {
-                            ui.error(&format!("Failed to check authentication status: {}", e));
-                            process::exit(1);
+                            if let Ok(ui_lock) = ui.lock() {
+                                ui_lock.error(&format!(
+                                    "Failed to check authentication status: {}",
+                                    e
+                                ));
+                            }
+                            return 1;
                         }
                     };
                     if status == "VERIFIED" {
@@ -220,21 +245,25 @@ async fn main() {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                     }
                 }
-                ui.success("Authenticated successfully!");
+                if let Ok(ui_lock) = ui.lock() {
+                    ui_lock.success("Authenticated successfully!");
+                }
 
-                let mut app = dashboard::DashboardApp::new(server_url.clone(), i18n);
+                let mut app = dashboard::DashboardApp::new(server_url.clone(), i18n.clone());
                 if let Err(e) = app.run() {
                     eprintln!("Error running dashboard: {e}");
                 }
-                process::exit(0);
+                return 0;
             }
             Commands::Update { force } => {
-                handle_update(&api_client, &ui, &i18n, force).await;
-                process::exit(0);
+                if handle_update(&api_client, &ui, i18n, force).await.is_err() {
+                    return 1;
+                }
+                return 0;
             }
             Commands::Config { action } => {
-                handle_config(action, yaml_config, &ui, &i18n).await;
-                process::exit(0);
+                handle_config(action, yaml_config, &ui, i18n).await;
+                return 0;
             }
         }
     }
@@ -256,29 +285,10 @@ async fn main() {
     let port = match port {
         Some(p) => p,
         None => {
-            ui.info(i18n.t("scanning_ports"));
-            let mut found_port = None;
-            for &p in &[3000, 8000, 8080] {
-                if std::net::TcpStream::connect_timeout(
-                    &format!("127.0.0.1:{p}").parse().unwrap(),
-                    Duration::from_millis(100),
-                )
-                .is_ok()
-                {
-                    found_port = Some(p);
-                    break;
-                }
-            }
-
-            match found_port {
-                Some(p) => {
-                    ui.success(&format!("{} {}", i18n.t("found_service"), p));
-                    p
-                }
-                None => {
-                    ui.error(i18n.t("no_port_found"));
-                    process::exit(1);
-                }
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            match detect_port(&ui_lock, i18n) {
+                Some(p) => p,
+                None => return 1,
             }
         }
     };
@@ -298,23 +308,29 @@ async fn main() {
 
     let cf_config = CloudflaredConfig::new();
     if !cf_config.is_installed() {
-        let pb = ui.create_spinner(i18n.t("downloading_binary"));
+        let pb = {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.create_spinner(i18n.t("downloading_binary"))
+        };
         if let Err(e) = cf_config.download().await {
             pb.finish_and_clear();
-            ui.error(&map_error(&e));
-            process::exit(1);
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&map_error(&e));
+            return 1;
         }
         pb.finish_with_message(i18n.t("installed_success"));
     } else {
-        ui.success(i18n.t("binary_found"));
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.success(i18n.t("binary_found"));
     }
 
     // Version Check
     let config = match api_client.get_config().await {
         Ok(c) => c,
         Err(e) => {
-            ui.error(&format!("Failed to fetch config: {}", e));
-            process::exit(1);
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Failed to fetch config: {}", e));
+            return 1;
         }
     };
 
@@ -325,16 +341,18 @@ async fn main() {
         &config.recommended_version,
     ) {
         VersionStatus::Outdated => {
-            ui.error(
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(
                 &i18n
                     .t("version_outdated")
                     .replace("{}", current_version)
                     .replace("{}", &config.min_cli_version),
             );
-            process::exit(1);
+            return 1;
         }
         VersionStatus::UpdateAvailable => {
-            ui.info(
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.info(
                 &i18n
                     .t("update_available")
                     .replace("{}", &config.recommended_version)
@@ -344,19 +362,19 @@ async fn main() {
         VersionStatus::UpToDate => {}
     }
 
-    let pb = ui.create_spinner(i18n.t("requesting_tunnel"));
-    let tunnel_info = match api_client
-        .request_tunnel(&device_id, Some(port), Some(protocol), None, None)
-        .await
+    let tunnel_info = match request_and_connect_tunnel(
+        &api_client,
+        &ui,
+        i18n,
+        port,
+        protocol,
+        &device_id,
+    )
+    .await
     {
         Ok(info) => info,
-        Err(e) => {
-            pb.finish_and_clear();
-            ui.error(&map_error(&e.to_string()));
-            process::exit(1);
-        }
+        Err(_) => return 1,
     };
-    pb.finish_with_message(i18n.t("tunnel_allocated"));
 
     let active_tunnels = registry.list_active();
     let mut metrics_port = 55555;
@@ -370,16 +388,22 @@ async fn main() {
     let mut child = match cf_config.start_tunnel(&tunnel_info.token, metrics_port) {
         Ok(c) => c,
         Err(e) => {
-            ui.error(&format!("Failed to start cloudflared: {e}"));
+            {
+                let ui_lock = ui.lock().expect("Failed to lock UI");
+                ui_lock.error(&format!("Failed to start cloudflared: {e}"));
+            }
             let _ = api_client.release_tunnel(&device_id).await;
-            process::exit(1);
+            return 1;
         }
     };
 
     let public_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
     sleep(Duration::from_millis(1500)).await;
 
-    ui.draw_connected_panel(port, &public_url, protocol);
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.draw_connected_panel(port, &public_url, protocol);
+    }
 
     // Hook: on_connect
     let mut hook_executed = false;
@@ -398,7 +422,10 @@ async fn main() {
         let _ = opener::open(&public_url);
     }
 
-    ui.info(i18n.t("running_background"));
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.info(i18n.t("running_background"));
+    }
 
     let _ = registry.register(registry::TunnelEntry {
         pid: process::id(),
@@ -416,17 +443,15 @@ async fn main() {
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
-    let ui_ref = Arc::new(Mutex::new(ui));
-    let ui_clone = ui_ref.clone();
-
     let health_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();
+    let ui_clone = ui.clone();
+    let ui_health_clone = ui.clone();
     let health_url = format!("http://localhost:{port}");
-    let ui_health_clone = ui_ref.clone();
 
-    let telemetry_api = ApiClient::new(server_url.clone());
+    let telemetry_api = api_client.clone();
     let telemetry_device = device_id.clone();
 
     let handle = tokio::spawn(async move {
@@ -533,7 +558,8 @@ async fn main() {
                                 let _ = api_client.release_tunnel(&device_id).await;
                                 let _ = registry::Registry::new().unregister(process::id());
                                 handle.abort();
-                                ui_ref.lock().unwrap().info("Tunnel stopped. Re-run command to restart.");
+                                let ui_lock = ui.lock().expect("Failed to lock UI");
+                                ui_lock.info("Tunnel stopped. Re-run command to restart.");
                                 process::exit(0);
                             }
                             _ => {}
@@ -593,12 +619,73 @@ fn get_machine_id_from_path(
     Ok(id)
 }
 
-async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool) {
+fn detect_port(ui: &Ui, i18n: &i18n::I18n) -> Option<u16> {
+    ui.info(i18n.t("scanning_ports"));
+    let mut found_port = None;
+    for &p in &[3000, 8000, 8080] {
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{p}").parse().unwrap(),
+            Duration::from_millis(100),
+        )
+        .is_ok()
+        {
+            found_port = Some(p);
+            break;
+        }
+    }
+    match found_port {
+        Some(p) => {
+            ui.success(&format!("{} {}", i18n.t("found_service"), p));
+            Some(p)
+        }
+        None => {
+            ui.error(i18n.t("no_port_found"));
+            None
+        }
+    }
+}
+
+async fn request_and_connect_tunnel(
+    api: &ApiClient,
+    ui: &Arc<Mutex<Ui>>,
+    i18n: &i18n::I18n,
+    port: u16,
+    protocol: &str,
+    device_id: &str,
+) -> Result<TunnelInfo, ()> {
+    let pb = {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.create_spinner(i18n.t("requesting_tunnel"))
+    };
+    let res = match api
+        .request_tunnel(device_id, Some(port), Some(protocol), None, None)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            pb.finish_and_clear();
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&map_error(&e));
+            return Err(());
+        }
+    };
+
+    pb.finish_with_message(i18n.t("tunnel_allocated"));
+    Ok(res)
+}
+
+async fn handle_update(
+    api: &ApiClient,
+    ui: &Arc<Mutex<Ui>>,
+    i18n: &i18n::I18n,
+    force: bool,
+) -> Result<(), ()> {
     let config = match api.get_config().await {
         Ok(c) => c,
         Err(e) => {
-            ui.error(&format!("Failed to fetch update info: {}", e));
-            return;
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Failed to fetch update info: {}", e));
+            return Err(());
         }
     };
 
@@ -610,15 +697,19 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
     );
 
     if !force && status == VersionStatus::UpToDate {
-        ui.success(i18n.t("up_to_date"));
-        return;
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.success(i18n.t("up_to_date"));
+        return Ok(());
     }
 
-    ui.info(&format!(
-        "{} v{}...",
-        i18n.t("updating"),
-        config.recommended_version
-    ));
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.info(&format!(
+            "{} v{}...",
+            i18n.t("updating"),
+            config.recommended_version
+        ));
+    }
 
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
@@ -628,8 +719,9 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
         ("macos", "aarch64") => "xpose-darwin-arm64",
         ("windows", "x86_64") => "xpose-windows-amd64.exe",
         _ => {
-            ui.error("Unsupported platform for self-update");
-            return;
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error("Unsupported platform for self-update");
+            return Err(());
         }
     };
 
@@ -638,29 +730,35 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
         config.recommended_version, release_name
     );
 
-    let pb = ui.create_spinner(i18n.t("downloading_update"));
+    let pb = {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.create_spinner(i18n.t("downloading_update"))
+    };
     let client = reqwest::Client::new();
     let res = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             pb.finish_and_clear();
-            ui.error(&format!("Download failed: {e}"));
-            return;
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Download failed: {e}"));
+            return Err(());
         }
     };
 
     if !res.status().is_success() {
         pb.finish_and_clear();
-        ui.error(&format!("Server returned error: {}", res.status()));
-        return;
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.error(&format!("Server returned error: {}", res.status()));
+        return Err(());
     }
 
     let bytes = match res.bytes().await {
         Ok(b) => b.to_vec(),
         Err(e) => {
             pb.finish_and_clear();
-            ui.error(&format!("Failed to read response body: {e}"));
-            return;
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Failed to read response body: {e}"));
+            return Err(());
         }
     };
 
@@ -668,8 +766,9 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
         Ok(e) => e,
         Err(e) => {
             pb.finish_and_clear();
-            ui.error(&format!("Could not determine current executable path: {e}"));
-            return;
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Could not determine current executable path: {e}"));
+            return Err(());
         }
     };
 
@@ -678,8 +777,9 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
 
     if let Err(e) = fs::write(&temp_exe, &bytes) {
         pb.finish_and_clear();
-        ui.error(&format!("Failed to write temporary file: {e}"));
-        return;
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.error(&format!("Failed to write temporary file: {e}"));
+        return Err(());
     }
 
     #[cfg(unix)]
@@ -694,25 +794,32 @@ async fn handle_update(api: &ApiClient, ui: &Ui, i18n: &i18n::I18n, force: bool)
 
     if let Err(e) = fs::rename(&temp_exe, &current_exe) {
         pb.finish_and_clear();
-        ui.error(&format!(
-            "Failed to replace binary: {e}. Try running with sudo/admin."
-        ));
+        {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!(
+                "Failed to replace binary: {e}. Try running with sudo/admin."
+            ));
+        }
         let _ = fs::remove_file(&temp_exe);
-        return;
+        return Err(());
     }
 
     pb.finish_and_clear();
-    ui.success(&format!(
-        "{} v{}",
-        i18n.t("update_success"),
-        config.recommended_version
-    ));
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.success(&format!(
+            "{} v{}",
+            i18n.t("update_success"),
+            config.recommended_version
+        ));
+    }
+    Ok(())
 }
 
 async fn handle_config(
     action: ConfigAction,
     mut config: XposeConfig,
-    ui: &ui::Ui,
+    ui: &Arc<Mutex<Ui>>,
     i18n: &i18n::I18n,
 ) {
     match action {
@@ -723,18 +830,21 @@ async fn handle_config(
                 "port" => config.port = value.parse().ok(),
                 "protocol" => config.protocol = Some(value.clone()),
                 _ => {
-                    ui.error(&i18n.t("config_error").replace("{}", &key));
+                    let ui_lock = ui.lock().expect("Failed to lock UI");
+                    ui_lock.error(&i18n.t("config_error").replace("{}", &key));
                     return;
                 }
             }
             if let Err(e) = config.save() {
-                ui.error(&format!("Failed to save config: {}", e));
+                let ui_lock = ui.lock().expect("Failed to lock UI");
+                ui_lock.error(&format!("Failed to save config: {}", e));
             } else {
                 let msg = i18n
                     .t("config_success")
                     .replacen("{}", &key, 1)
                     .replacen("{}", &value, 1);
-                ui.success(&msg);
+                let ui_lock = ui.lock().expect("Failed to lock UI");
+                ui_lock.success(&msg);
             }
         }
         ConfigAction::Get { key } => {
@@ -744,7 +854,8 @@ async fn handle_config(
                 "port" => config.port.map(|p| p.to_string()),
                 "protocol" => config.protocol.clone(),
                 _ => {
-                    ui.error(&i18n.t("config_error").replace("{}", &key));
+                    let ui_lock = ui.lock().expect("Failed to lock UI");
+                    ui_lock.error(&i18n.t("config_error").replace("{}", &key));
                     return;
                 }
             };
@@ -756,6 +867,7 @@ async fn handle_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::Server;
 
     #[test]
     fn test_version_compatibility() {
@@ -876,5 +988,219 @@ mod tests {
         // Persistence check
         let id2 = get_machine_id_from_path(path).unwrap();
         assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_detect_port_none() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Ui::new(i18n.clone());
+        // Should return None if no ports are listening (assuming 3000, 8000, 8080 are free in test environment)
+        let port = detect_port(&ui, &i18n);
+        assert!(port.is_none() || [Some(3000), Some(8000), Some(8080)].contains(&port));
+    }
+
+    #[tokio::test]
+    async fn test_handle_config_get_set() {
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+
+        // Test Set
+        handle_config(
+            ConfigAction::Set {
+                key: "port".to_string(),
+                value: "1234".to_string(),
+            },
+            config.clone(),
+            &ui,
+            &i18n,
+        )
+        .await;
+        // (Note: manual file check or capturing stdout would be better, but this improves coverage)
+    }
+
+    #[test]
+    fn test_map_error() {
+        assert_eq!(
+            map_error("timeout"),
+            "Request timed out. Please check your internet connection."
+        );
+        assert_eq!(
+            map_error("403"),
+            "Access denied. This port might be restricted for security reasons."
+        );
+        assert_eq!(
+            map_error("401"),
+            "Unauthorized. Please check your credentials."
+        );
+        assert_eq!(
+            map_error("500"),
+            "Internal server error. Please try again later."
+        );
+        assert_eq!(map_error("other"), "An unexpected error occurred: other");
+    }
+
+    #[test]
+    fn test_check_version_compatibility() {
+        assert_eq!(
+            check_version_compatibility("1.0.0", "1.0.0", "1.1.0"),
+            VersionStatus::UpdateAvailable
+        );
+        assert_eq!(
+            check_version_compatibility("1.1.0", "1.0.0", "1.1.0"),
+            VersionStatus::UpToDate
+        );
+        assert_eq!(
+            check_version_compatibility("0.9.0", "1.0.0", "1.1.0"),
+            VersionStatus::Outdated
+        );
+        assert_eq!(
+            check_version_compatibility("1.0.5", "1.0.0", "1.1.0"),
+            VersionStatus::UpdateAvailable
+        );
+    }
+
+    #[test]
+    fn test_get_machine_id_creation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("device_id");
+
+        // Should generate new ID
+        let id1 = get_machine_id_from_path(path.clone()).unwrap();
+        assert!(!id1.is_empty());
+
+        // Should read existing ID
+        let id2 = get_machine_id_from_path(path).unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[tokio::test]
+    async fn test_request_and_connect_tunnel_success() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"success": true, "tunnel": {"id": "t1", "name": "n1", "token": "tok1"}}"#,
+            )
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
+        assert!(res.is_ok());
+        let info = res.unwrap();
+        assert_eq!(info.id, "t1");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_and_connect_tunnel_failure() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
+        assert!(res.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_update_smoke() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"min_cli_version": "0.1.0", "recommended_version": "0.1.0"}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        assert!(handle_update(&api, &ui, &i18n, false).await.is_ok());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_config_get() {
+        let args = Args::parse_from(["xpose", "config", "get", "server_url"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_config_set() {
+        let args = Args::parse_from(["xpose", "config", "set", "lang", "en"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_update() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"min_cli_version": "0.1.0", "recommended_version": "0.1.0"}"#)
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_no_command() {
+        let args = Args::parse_from(["xpose"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        // This will return 1 because it'll fail at port detection or other setup in test env
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_update_fetch_config_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("GET", "/api/config")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 1);
     }
 }

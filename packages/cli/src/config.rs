@@ -81,4 +81,18 @@ mod tests {
             Some("echo hello".to_string())
         );
     }
+
+    #[test]
+    fn test_config_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("xpose.yaml");
+        let config = XposeConfig {
+            port: Some(9999),
+            ..Default::default()
+        };
+        config.save_to_path(&path).unwrap();
+
+        let loaded = XposeConfig::load_from_path(&path);
+        assert_eq!(loaded.port, Some(9999));
+    }
 }

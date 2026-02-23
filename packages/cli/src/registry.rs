@@ -167,4 +167,31 @@ mod tests {
         let entries = registry.list_all();
         assert_eq!(entries.len(), 0); // Should fallback to empty list
     }
+
+    #[test]
+    fn test_registry_list_active_persists_cleanup() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tunnels.json");
+        let registry = Registry { path: path.clone() };
+
+        let zombie_entry = TunnelEntry {
+            pid: 999999,
+            port: 3001,
+            protocol: "tcp".to_string(),
+            url: "http://zombie".to_string(),
+            start_time: get_now_secs(),
+            metrics_port: 55556,
+        };
+
+        registry.register(zombie_entry).unwrap();
+        assert_eq!(registry.list_all().len(), 1);
+
+        // list_active should trigger save if it finds zombies
+        let active = registry.list_active();
+        assert_eq!(active.len(), 0);
+
+        // Verify it was saved to the file
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "[]");
+    }
 }

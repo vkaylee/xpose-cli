@@ -91,14 +91,7 @@ impl DashboardApp {
 
             if event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') => self.should_quit = true,
-                        KeyCode::Char('x') => self.stop_selected_session(),
-                        KeyCode::Char('r') => self.restart_selected_session(),
-                        KeyCode::Down => self.next(),
-                        KeyCode::Up => self.previous(),
-                        _ => {}
-                    }
+                    self.handle_key_event(key);
                 }
             }
 
@@ -136,7 +129,6 @@ impl DashboardApp {
             self.table_state.select(Some(0));
         }
 
-        // Fetch global stats every 10 ticks (approx every 5s if tick_rate is 500ms)
         if self.tick_count.is_multiple_of(10) {
             let url = format!("{}/api/stats", self.api_url);
             if let Ok(res) = self.metrics_client.get(&url).send() {
@@ -145,8 +137,23 @@ impl DashboardApp {
                 }
             }
         }
-        self.tick_count = self.tick_count.wrapping_add(1);
 
+        self.tick_count += 1;
+        self.update_metrics();
+    }
+
+    fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => self.next(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous(),
+            KeyCode::Char('s') | KeyCode::Delete => self.stop_selected_session(),
+            KeyCode::Char('r') => self.restart_selected_session(),
+            _ => {}
+        }
+    }
+
+    fn update_metrics(&mut self) {
         // Fetch metrics for all tunnels
         for tunnel in &self.tunnels {
             let url = format!("http://localhost:{}/metrics", tunnel.metrics_port);
@@ -500,6 +507,7 @@ pub fn parse_metrics(text: &str) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyEvent, KeyModifiers};
 
     #[test]
     fn test_parse_metrics() {
@@ -507,6 +515,14 @@ mod tests {
         let (rx, tx) = parse_metrics(text);
         assert_eq!(rx, 1024);
         assert_eq!(tx, 2048);
+    }
+
+    #[test]
+    fn test_parse_metrics_malformed() {
+        let text = "invalid line\ncloudflared_tunnel_rx_bytes NaN";
+        let (rx, tx) = parse_metrics(text);
+        assert_eq!(rx, 0);
+        assert_eq!(tx, 0);
     }
 
     #[test]
@@ -540,5 +556,71 @@ mod tests {
 
         app.previous();
         assert_eq!(app.table_state.selected(), Some(1)); // Boundary wrap
+    }
+
+    #[test]
+    fn test_dashboard_tick_logic() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        let initial_tick = app.tick_count;
+        app.on_tick();
+        assert_eq!(app.tick_count, initial_tick + 1);
+    }
+
+    #[test]
+    fn test_dashboard_empty_state() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.next();
+        assert_eq!(app.table_state.selected(), None);
+        app.previous();
+        assert_eq!(app.table_state.selected(), None);
+    }
+
+    #[test]
+    fn test_dashboard_restart_stop_no_selection() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        // Should not panic or do anything if nothing is selected
+        app.stop_selected_session();
+        app.restart_selected_session();
+    }
+
+    #[test]
+    fn test_dashboard_key_events() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+
+        // Test 'q' key
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()));
+        assert!(app.should_quit);
+
+        // Reset and test Esc
+        app.should_quit = false;
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+        assert!(app.should_quit);
+
+        // Test navigation keys
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+    }
+
+    #[test]
+    fn test_dashboard_ui_render() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| app.ui(f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        // Check for some expected strings in the buffer
+        let content = format!("{:?}", buffer);
+        assert!(content.contains(" xpose dashboard "));
+        assert!(content.contains("Port"));
+    }
+
+    #[test]
+    fn test_dashboard_on_tick() {
+        let mut app = DashboardApp::new("http://invalid".to_string(), I18n::new(None));
+        // Should not panic even if metrics_client fails
+        app.on_tick();
+        assert_eq!(app.tick_count, 1);
     }
 }

@@ -254,5 +254,50 @@ mod tests {
         assert_eq!(Ui::format_size(1024), "1.0 KB");
         assert_eq!(Ui::format_size(1024 * 1024), "1.00 MB");
         assert_eq!(Ui::format_size(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(Ui::format_size(2048), "2.0 KB");
+    }
+
+    #[test]
+    fn test_generate_sparkline() {
+        let i18n = crate::i18n::I18n::new(None);
+        let mut ui = Ui::new(i18n);
+
+        // Empty history
+        assert_eq!(ui.generate_sparkline(), " ".repeat(20));
+
+        // Mixed history
+        ui.metrics_history = vec![0, 10, 20, 30, 40, 50, 60, 70, 80];
+        let spark = ui.generate_sparkline();
+        assert_eq!(spark.chars().count(), 20);
+        assert!(spark.contains('█')); // Max value should be full block
+        assert!(spark.contains(' ')); // Min value should be empty/low
+
+        // All same values
+        ui.metrics_history = vec![100; 20];
+        let spark_constant = ui.generate_sparkline();
+        assert_eq!(spark_constant, "████████████████████");
+    }
+
+    #[test]
+    fn test_ui_drawing_methods_smoke() {
+        let i18n = crate::i18n::I18n::new(None);
+        let mut ui = Ui::new(i18n);
+
+        // Smoke tests for drawing methods (ensure no panic)
+        ui.success("testing success");
+        ui.error("testing error");
+        ui.info("testing info");
+        ui.draw_auth_panel();
+        ui.draw_qr_auth("http://example.com");
+        ui.draw_connected_panel(3000, "https://public.url", "tcp");
+        ui.draw_live_metrics(100, 200, 10, 20, 15, 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_ui_draw_qr_smoke() {
+        let i18n = crate::i18n::I18n::new(None);
+        let ui = Ui::new(i18n);
+        // This should not panic
+        ui.draw_qr_auth("https://xpose.dev/auth/v1/test-session-id");
     }
 }

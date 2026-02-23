@@ -58,6 +58,7 @@ pub struct ApiResponse {
     pub error: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct ApiClient {
     client: Client,
     base_url: String,
