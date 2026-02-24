@@ -57,7 +57,7 @@ struct DeviceRequest {
 }
 
 pub const MIN_CLI_VERSION: &str = "0.4.17";
-pub const RECOMMENDED_VERSION: &str = "0.4.17";
+pub const RECOMMENDED_VERSION: &str = "0.4.19";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
@@ -165,6 +165,11 @@ async fn check_rate_limit(db: &D1Database, ip: &str) -> Result<bool> {
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     console_error_panic_hook::set_once();
+
+    if let Ok(Some(version)) = req.headers().get("X-CLI-Version") {
+        console_log!("[API] CLI Version: {}", version);
+    }
+
     let router = Router::new();
 
     router

@@ -69,9 +69,17 @@ impl ApiClient {
         if base_url.ends_with('/') {
             base_url.pop();
         }
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "X-CLI-Version",
+            reqwest::header::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
+
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
+                .default_headers(headers)
                 .build()
                 .unwrap(),
             base_url,
