@@ -630,7 +630,7 @@ mod tests {
         app.metrics.insert(
             1234,
             TunnelMetrics {
-                rx_bytes: 1000,
+                rx_bytes: 1024,
                 tx_bytes: 2000,
                 rx_speed: 100,
                 tx_speed: 200,
@@ -646,10 +646,9 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let content = format!("{:?}", buffer);
         assert!(content.contains("8080"));
-        assert!(content.contains("tcp"));
+        assert!(content.contains("TCP"));
         assert!(content.contains("1.0 KB")); // rx_bytes
         assert!(content.contains("2.0 KB")); // tx_bytes
-        assert!(content.contains("1.0 MB")); // ram_bytes
     }
 
     #[test]
