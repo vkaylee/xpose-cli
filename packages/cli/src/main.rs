@@ -358,14 +358,10 @@ async fn run_tunnel(
     let public_url = if let Some(url) = tunnel_info.public_url {
         url
     } else {
-        let scheme = if protocol == "udp" {
-            "udp"
-        } else if protocol == "tcp" {
-            "tcp"
-        } else {
-            "https"
-        };
-        format!("{scheme}://{}.trycloudflare.com", tunnel_info.name)
+        // Cloudflare Quick Tunnels always expose traffic over HTTPS (port 443)
+        // regardless of the local protocol. The protocol flag only affects how
+        // cloudflared connects to the local service internally.
+        format!("https://{}.trycloudflare.com", tunnel_info.name)
     };
     sleep(Duration::from_millis(1500)).await;
 
