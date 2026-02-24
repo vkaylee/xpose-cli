@@ -257,4 +257,88 @@ mod tests {
         // Test a key that definitely exists in EN but maybe not in VI (though I added it)
         assert_ne!(i18n.t("startup"), "startup");
     }
+
+    #[test]
+    fn test_language_from_str_cn_alias() {
+        // 'cn' should map to Chinese
+        let lang = Language::from_str("cn");
+        assert_eq!(lang, Language::Zh);
+
+        let lang_zh = Language::from_str("zh");
+        assert_eq!(lang_zh, Language::Zh);
+
+        // unknown defaults to English
+        let lang_unknown = Language::from_str("fr");
+        assert_eq!(lang_unknown, Language::En);
+
+        // Case insensitive
+        let lang_vi_upper = Language::from_str("VI");
+        assert_eq!(lang_vi_upper, Language::Vi);
+    }
+
+    #[test]
+    fn test_language_auto_detect_vi() {
+        // Set LANG to Vietnamese and verify detection
+        unsafe { std::env::set_var("LANG", "vi_VN.UTF-8") };
+        let lang = Language::auto_detect();
+        assert_eq!(lang, Language::Vi);
+        unsafe { std::env::remove_var("LANG") };
+    }
+
+    #[test]
+    fn test_language_auto_detect_zh() {
+        unsafe {
+            std::env::remove_var("LANG");
+            std::env::set_var("LC_ALL", "zh_CN.UTF-8");
+        }
+        let lang = Language::auto_detect();
+        assert_eq!(lang, Language::Zh);
+        unsafe { std::env::remove_var("LC_ALL") };
+    }
+
+    #[test]
+    fn test_language_auto_detect_en_fallback() {
+        unsafe {
+            std::env::remove_var("LANG");
+            std::env::remove_var("LC_ALL");
+        }
+        let lang = Language::auto_detect();
+        // Without LANG set, should default to English
+        assert_eq!(lang, Language::En);
+    }
+
+    #[test]
+    fn test_i18n_unknown_key_returns_key() {
+        let i18n = I18n { lang: Language::En };
+        // Unknown keys should be returned verbatim
+        assert_eq!(i18n.t("some_unknown_key"), "some_unknown_key");
+
+        let i18n_vi = I18n { lang: Language::Vi };
+        assert_eq!(i18n_vi.t("some_unknown_key"), "some_unknown_key");
+
+        let i18n_zh = I18n { lang: Language::Zh };
+        assert_eq!(i18n_zh.t("some_unknown_key"), "some_unknown_key");
+    }
+
+    #[test]
+    fn test_i18n_new_with_lang_override() {
+        let i18n = I18n::new(Some("vi".to_string()));
+        assert_eq!(i18n.lang, Language::Vi);
+
+        let i18n_zh = I18n::new(Some("zh".to_string()));
+        assert_eq!(i18n_zh.lang, Language::Zh);
+
+        let i18n_en = I18n::new(Some("en".to_string()));
+        assert_eq!(i18n_en.lang, Language::En);
+    }
+
+    #[test]
+    fn test_i18n_zh_specific_keys() {
+        let i18n = I18n { lang: Language::Zh };
+        // These are zh-specific strings
+        assert_eq!(i18n.t("connected"), "已连接");
+        assert_eq!(i18n.t("startup"), "正在启动 xpose CLI");
+        assert_eq!(i18n.t("config_success"), "Successfully set {} to {}"); // falls back to en
+        assert_eq!(i18n.t("config_error"), "Invalid configuration key: {}"); // falls back to en
+    }
 }

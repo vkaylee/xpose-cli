@@ -505,4 +505,87 @@ mod tests {
         let client = ApiClient::new(url);
         assert!(client.release_tunnel("d1").await.is_err());
     }
+
+    #[tokio::test]
+    async fn test_post_telemetry_success() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/telemetry")
+            .with_status(200)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        // post_telemetry always returns Ok
+        let res = client
+            .post_telemetry(serde_json::json!({"event": "test"}))
+            .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_post_telemetry_swallows_error() {
+        // Even if the server is not running, post_telemetry should return Ok
+        let client = ApiClient::new("http://localhost:1".to_string());
+        let res = client
+            .post_telemetry(serde_json::json!({"event": "test"}))
+            .await;
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_global_stats_default() {
+        let stats = GlobalStats::default();
+        assert_eq!(stats.total, 0);
+        assert_eq!(stats.busy, 0);
+        assert_eq!(stats.available, 0);
+    }
+
+    #[tokio::test]
+    async fn test_request_tunnel_with_session_and_auth() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"success": true, "tunnel": {"id": "t2", "name": "n2", "token": "tok2", "public_url": null}}"#,
+            )
+            .create_async()
+            .await;
+
+        let client = ApiClient::new(url);
+        let info = client
+            .request_tunnel(
+                "dev2",
+                Some(8080),
+                Some("udp"),
+                Some("session-abc".to_string()),
+                Some("auth-token-xyz".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(info.id, "t2");
+        assert_eq!(info.public_url, None);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_tunnel_raw_text_on_error() {
+        // When status != success AND JSON fails to parse, raw text should be returned as error
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/request")
+            .with_status(503)
+            .with_body("Service Unavailable")
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        let res = client.request_tunnel("d1", None, None, None, None).await;
+        assert!(res.is_err());
+        assert_eq!(res.err().unwrap(), "Service Unavailable");
+    }
 }

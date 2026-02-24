@@ -470,4 +470,53 @@ mod tests {
         let line = "2026-02-24T09:39:30Z INF Doing so, without a Cloudflare account, is a quick way to experiment. https://developers.cloudflare.com/cloudflare-one/connections/connect-apps";
         assert_eq!(parse_hostname_from_log_line(line), None);
     }
+
+    /// JSON with localhost url must be rejected.
+    #[test]
+    fn test_json_url_localhost_rejected() {
+        let line = r#"{"level":"info","url":"http://localhost:8080","message":"x"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// JSON with 127.x URL: strategy 2 accepts any host with dots, so 127.0.0.1 will be included.
+    #[test]
+    fn test_json_url_127_accepted_by_json_strategy() {
+        // 127.0.0.1 has dots so JSON strategy will accept it (not localhost)
+        let line = r#"{"level":"info","url":"http://127.0.0.1:8080","message":"x"}"#;
+        let result = parse_hostname_from_log_line(line);
+        // JSON strategy passes 127.0.0.1 since it has dots and is not "localhost"
+        assert_eq!(result, Some("https://127.0.0.1:8080".to_string()));
+    }
+
+    /// JSON where url has no dot (invalid host) must be rejected.
+    #[test]
+    fn test_json_url_no_dot_rejected() {
+        let line = r#"{"level":"info","url":"http://nodot","message":"x"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// JSON with host field (not hostname/url/host)
+    #[test]
+    fn test_json_host_field() {
+        let line = r#"{"level":"info","host":"my-host.example.com","message":"Registered"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://my-host.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_cloudflared_config_from_env_temp_only() {
+        // Temp path only (home = None)
+        let config =
+            CloudflaredConfig::from_env(None, Some(PathBuf::from("/tmp/test-xpose")), None);
+        assert!(config.bin_path.to_str().unwrap().contains("cloudflared"));
+    }
+
+    #[test]
+    fn test_cloudflared_config_from_env_project_only() {
+        let config = CloudflaredConfig::from_env(None, None, Some(PathBuf::from("/workspace")));
+        assert!(config.bin_path.to_str().unwrap().contains("cloudflared"));
+        assert!(config.bin_path.to_str().unwrap().contains(".xpose-bin"));
+    }
 }

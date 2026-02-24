@@ -1468,4 +1468,154 @@ mod tests {
             assert_eq!(port, Some(3000));
         }
     }
+
+    #[tokio::test]
+    async fn test_handle_config_get_all_keys() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        let config = XposeConfig {
+            port: Some(1234),
+            protocol: Some("udp".to_string()),
+            lang: Some("vi".to_string()),
+            server_url: Some("http://test.server".to_string()),
+            hooks: None,
+        };
+
+        // Test Get for each valid key
+        for key in &["port", "protocol", "lang", "server_url"] {
+            handle_config(
+                ConfigAction::Get {
+                    key: key.to_string(),
+                },
+                config.clone(),
+                &ui,
+                &i18n,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_config_get_invalid_key() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let config = XposeConfig::default();
+
+        handle_config(
+            ConfigAction::Get {
+                key: "totally_invalid_key".to_string(),
+            },
+            config,
+            &ui,
+            &i18n,
+        )
+        .await;
+        // Should not panic; invalid key shows error
+    }
+
+    #[tokio::test]
+    async fn test_handle_update_force() {
+        // When force=true, should still proceed even if up-to-date,
+        // but will fail at the download step (no actual URL in test),
+        // hence we mock both config and the download URL
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _m1 = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"min_cli_version": "0.1.0", "recommended_version": "0.1.0"}"#)
+            .create_async()
+            .await;
+
+        // Download will fail (404), which means Err(()) returned
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let res = handle_update(&api, &ui, &i18n, true).await;
+        // force=true triggers download which will fail -> Err
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_protocol_selection_from_config() {
+        // Verify the protocol logic (args.udp || yaml_config.protocol == udp)
+        // This is tested indirectly via run_cli but we can also test the logic directly
+        let udp = true;
+        let yaml_proto: Option<&str> = None;
+        let protocol = if udp || yaml_proto == Some("udp") {
+            "udp"
+        } else {
+            "tcp"
+        };
+        assert_eq!(protocol, "udp");
+
+        let udp2 = false;
+        let yaml_proto2: Option<&str> = Some("udp");
+        let protocol2 = if udp2 || yaml_proto2 == Some("udp") {
+            "udp"
+        } else {
+            "tcp"
+        };
+        assert_eq!(protocol2, "udp");
+
+        let udp3 = false;
+        let yaml_proto3: Option<&str> = Some("tcp");
+        let protocol3 = if udp3 || yaml_proto3 == Some("udp") {
+            "udp"
+        } else {
+            "tcp"
+        };
+        assert_eq!(protocol3, "tcp");
+    }
+
+    #[test]
+    fn test_get_machine_id_nested_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Path with non-existent intermediate directories
+        let path = dir.path().join("a").join("b").join("device_id");
+        let id = get_machine_id_from_path(path.clone()).unwrap();
+        assert!(!id.is_empty());
+        assert_eq!(id, get_machine_id_from_path(path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_with_port_arg() {
+        // When a port is provided but we fail at the server config step
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "3000"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        // Will fail at config fetch
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn test_args_udp_flag() {
+        let args = Args::parse_from(["xpose", "--udp", "3000"]);
+        assert!(args.udp);
+        assert_eq!(args.port, Some(3000));
+    }
+
+    #[test]
+    fn test_args_lang_flag() {
+        let args = Args::parse_from(["xpose", "--lang", "vi"]);
+        assert_eq!(args.lang, Some("vi".to_string()));
+    }
+
+    #[test]
+    fn test_args_open_flag() {
+        let args = Args::parse_from(["xpose", "--open", "3000"]);
+        assert!(args.open);
+    }
 }

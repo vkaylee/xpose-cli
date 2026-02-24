@@ -661,4 +661,147 @@ mod tests {
         assert_eq!(app.global_stats.busy, 5);
         assert_eq!(app.global_stats.available, 10);
     }
+
+    #[test]
+    fn test_parse_metrics_empty() {
+        let (rx, tx) = parse_metrics("");
+        assert_eq!(rx, 0);
+        assert_eq!(tx, 0);
+    }
+
+    #[test]
+    fn test_parse_metrics_only_rx() {
+        let text = "cloudflared_tunnel_rx_bytes 512";
+        let (rx, tx) = parse_metrics(text);
+        assert_eq!(rx, 512);
+        assert_eq!(tx, 0);
+    }
+
+    #[test]
+    fn test_parse_metrics_only_tx() {
+        let text = "cloudflared_tunnel_tx_bytes 1024";
+        let (rx, tx) = parse_metrics(text);
+        assert_eq!(rx, 0);
+        assert_eq!(tx, 1024);
+    }
+
+    #[test]
+    fn test_parse_metrics_with_extra_lines() {
+        let text = "# HELP cloudflared_tunnel_rx_bytes\n# TYPE cloudflared_tunnel_rx_bytes gauge\ncloudflared_tunnel_rx_bytes 9999\ncloudflared_tunnel_tx_bytes 7777\nsome_other_metric 100";
+        let (rx, tx) = parse_metrics(text);
+        assert_eq!(rx, 9999);
+        assert_eq!(tx, 7777);
+    }
+
+    #[test]
+    fn test_dashboard_key_events_navigation_j_k() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.tunnels = vec![
+            TunnelEntry {
+                pid: 10,
+                port: 3000,
+                protocol: "tcp".to_string(),
+                url: "u1".to_string(),
+                start_time: 0,
+                metrics_port: 0,
+            },
+            TunnelEntry {
+                pid: 11,
+                port: 4000,
+                protocol: "tcp".to_string(),
+                url: "u2".to_string(),
+                start_time: 0,
+                metrics_port: 0,
+            },
+        ];
+        app.table_state.select(Some(0));
+
+        // 'j' goes down
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()));
+        assert_eq!(app.table_state.selected(), Some(1));
+
+        // 'k' goes up
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()));
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_dashboard_app_defaults() {
+        let app = DashboardApp::new("http://my.server".to_string(), I18n::new(None));
+        assert_eq!(app.tick_count, 0);
+        assert!(!app.should_quit);
+        assert_eq!(app.api_url, "http://my.server");
+        assert!(app.server_config.is_none());
+    }
+
+    #[test]
+    fn test_dashboard_key_event_s_no_selection() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        // Should not panic when pressing 's' with no selection
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty()));
+    }
+
+    #[test]
+    fn test_dashboard_key_event_r_no_selection() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        // Should not panic when pressing 'r' with no selection
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::empty()));
+    }
+
+    #[test]
+    fn test_dashboard_key_event_unknown() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        // Unknown key events should be handled gracefully
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::empty()));
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_dashboard_ui_render_no_selection() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.tunnels = vec![TunnelEntry {
+            pid: 1234,
+            port: 8080,
+            protocol: "tcp".to_string(),
+            url: "https://test.xpose.dev".to_string(),
+            start_time: 1700000000,
+            metrics_port: 55555,
+        }];
+        // No selection -> details panel should not render
+        app.table_state.select(None);
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.ui(f)).unwrap();
+    }
+
+    #[test]
+    fn test_dashboard_ui_render_with_high_usage() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.global_stats = GlobalStats {
+            total: 100,
+            busy: 90,
+            available: 10,
+        };
+        app.tunnels = vec![TunnelEntry {
+            pid: 1234,
+            port: 8080,
+            protocol: "tcp".to_string(),
+            url: "https://test.xpose.dev".to_string(),
+            start_time: 1700000000,
+            metrics_port: 55555,
+        }];
+        app.table_state.select(Some(0));
+
+        let backend = ratatui::backend::TestBackend::new(120, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.ui(f)).unwrap();
+    }
+
+    #[test]
+    fn test_dashboard_delete_key() {
+        let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        // Delete key should call stop_selected_session (nothing to stop)
+        app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::empty()));
+    }
 }

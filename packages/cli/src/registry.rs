@@ -194,4 +194,108 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content, "[]");
     }
+
+    #[test]
+    fn test_get_now_secs() {
+        let t = get_now_secs();
+        // Should be a reasonable Unix timestamp (after 2020)
+        assert!(t > 1_577_836_800);
+    }
+
+    #[test]
+    fn test_registry_list_all_no_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.json");
+        let registry = Registry { path };
+        // Should return empty vec if file doesn't exist
+        assert_eq!(registry.list_all().len(), 0);
+    }
+
+    #[test]
+    fn test_registry_register_dedup_port() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tunnels.json");
+        let registry = Registry { path };
+
+        // Register first entry on port 3000
+        registry
+            .register(TunnelEntry {
+                pid: 1,
+                port: 3000,
+                protocol: "tcp".to_string(),
+                url: "http://first".to_string(),
+                start_time: get_now_secs(),
+                metrics_port: 55555,
+            })
+            .unwrap();
+
+        // Register second entry on same port 3000 but different pid
+        // The old entry with that port should be removed
+        registry
+            .register(TunnelEntry {
+                pid: 2,
+                port: 3000,
+                protocol: "tcp".to_string(),
+                url: "http://second".to_string(),
+                start_time: get_now_secs(),
+                metrics_port: 55556,
+            })
+            .unwrap();
+
+        let all = registry.list_all();
+        // Only one entry should remain (deduplication on port)
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].url, "http://second");
+    }
+
+    #[test]
+    fn test_registry_register_dedup_pid() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tunnels.json");
+        let registry = Registry { path };
+
+        // Register first entry with pid 42
+        registry
+            .register(TunnelEntry {
+                pid: 42,
+                port: 3000,
+                protocol: "tcp".to_string(),
+                url: "http://first".to_string(),
+                start_time: get_now_secs(),
+                metrics_port: 55555,
+            })
+            .unwrap();
+
+        // Re-register with same pid (new port) - PID collision should remove old entry
+        registry
+            .register(TunnelEntry {
+                pid: 42,
+                port: 4000,
+                protocol: "tcp".to_string(),
+                url: "http://updated".to_string(),
+                start_time: get_now_secs(),
+                metrics_port: 55557,
+            })
+            .unwrap();
+
+        let all = registry.list_all();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].url, "http://updated");
+    }
+
+    #[test]
+    fn test_tunnel_entry_clone() {
+        let entry = TunnelEntry {
+            pid: 1,
+            port: 3000,
+            protocol: "tcp".to_string(),
+            url: "http://test".to_string(),
+            start_time: 12345,
+            metrics_port: 55555,
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.pid, entry.pid);
+        assert_eq!(cloned.port, entry.port);
+        assert_eq!(cloned.url, entry.url);
+    }
 }
