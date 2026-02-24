@@ -43,12 +43,12 @@ struct AddTunnelRequest {
 }
 
 #[derive(Deserialize)]
-struct RequestTunnelRequest {
-    device_id: String,
-    port: Option<u16>,
-    protocol: Option<String>,
-    session_id: Option<String>,
-    auth_token: Option<String>,
+pub struct RequestTunnelRequest {
+    pub device_id: String,
+    pub port: Option<u16>,
+    pub protocol: Option<String>,
+    pub session_id: Option<String>,
+    pub auth_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -56,8 +56,8 @@ struct DeviceRequest {
     device_id: String,
 }
 
-pub const MIN_CLI_VERSION: &str = "0.4.14";
-pub const RECOMMENDED_VERSION: &str = "0.4.14";
+pub const MIN_CLI_VERSION: &str = "0.4.16";
+pub const RECOMMENDED_VERSION: &str = "0.4.16";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
@@ -363,9 +363,7 @@ async fn handle_auth_verify_post(mut req: Request, ctx: RouteContext<()>) -> Res
     Ok(Response::ok(html)?.with_headers(headers))
 }
 
-pub fn validate_tunnel_request(
-    body: &RequestTunnelRequest,
-) -> Result<(), (String, u16)> {
+pub fn validate_tunnel_request(body: &RequestTunnelRequest) -> Result<(), (String, u16)> {
     if let Some(p) = body.port {
         if !ALLOWED_PORTS.contains(&p) {
             return Err((format!("Port {p} is restricted for security reasons."), 403));
@@ -584,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(MIN_CLI_VERSION, "0.4.14");
+        assert_eq!(MIN_CLI_VERSION, "0.4.16");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 
@@ -678,7 +676,10 @@ mod tests {
         let url = Url::parse("https://api.xpose.cloud/api/auth/init").unwrap();
         let sid = "session-123";
         let verify_url = get_verify_url(&url, sid);
-        assert_eq!(verify_url, "https://api.xpose.cloud/api/auth/verify?s=session-123");
+        assert_eq!(
+            verify_url,
+            "https://api.xpose.cloud/api/auth/verify?s=session-123"
+        );
     }
 
     #[test]

@@ -363,7 +363,7 @@ mod tests {
         let i18n = I18n::new(None);
         let ui = Ui::new(i18n);
         assert!(!ui.silent);
-        
+
         // These should not panic
         ui.success("test");
         ui.error("test");

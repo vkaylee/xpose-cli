@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_config_save_error() {
-        let mut config = XposeConfig::default();
+        let config = XposeConfig::default();
         let invalid_path = std::path::PathBuf::from("/non/existent/path/config.yaml");
         let res = config.save_to_path(&invalid_path);
         assert!(res.is_err());
