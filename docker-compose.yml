@@ -9,7 +9,6 @@ services:
       - cargo-git:/usr/local/cargo/git
     tmpfs:
       - /workspace/.sccache:size=512m,mode=1777
-      - /workspace/target:size=6g,mode=1777,exec
       - /tmp:size=1g,mode=1777
     environment:
       - MT_TUNNEL_PORT=3000

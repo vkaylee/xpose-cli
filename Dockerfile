@@ -33,6 +33,7 @@ RUN dpkg --add-architecture arm64 \
     musl-dev:arm64 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && npm install -g wrangler \
     && rm -rf /var/lib/apt/lists/* \
     && echo '#!/bin/sh' > /usr/bin/aarch64-linux-musl-gcc \
     && echo 'exec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' >> /usr/bin/aarch64-linux-musl-gcc \
