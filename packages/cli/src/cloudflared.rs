@@ -184,33 +184,47 @@ impl CloudflaredConfig {
     }
 }
 
-/// Parse the public hostname from a single cloudflared JSON log line.
-/// cloudflared outputs structured JSON logs to stderr, e.g.:
-/// {"level":"info","hostname":"abc123.trycloudflare.com",...}
-/// We also look for "host" and "url" fallbacks.
+/// Parse the public hostname from a single cloudflared log line.
+///
+/// cloudflared outputs plain-text structured logs to stderr. For quick tunnels
+/// the URL appears inside an ASCII box:
+///   `INF |  https://abc-def.trycloudflare.com  |`
+///
+/// For named tunnels the hostname is NOT logged — it must come from the
+/// server's `public_url` field instead.
+///
+/// We also attempt JSON parsing as a fallback for future versions.
 pub fn parse_hostname_from_log_line(line: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    // Named tunnels log the hostname in different fields depending on version:
-    // - "hostname": the configured ingress hostname
-    // - "host": seen in some routing log lines
-    // - "url": seen in quick-tunnel confirmation lines
-    for key in &["hostname", "host", "url"] {
-        if let Some(s) = v.get(key).and_then(|v| v.as_str()) {
-            let s = s.trim();
-            if !s.is_empty()
-                // must look like a hostname/URL, not an internal address
-                && !s.starts_with("localhost")
-                && !s.starts_with("127.")
-                && s.contains('.')
-            {
-                // Normalise – strip any http/https scheme so caller decides
-                let host = s
-                    .trim_start_matches("https://")
-                    .trim_start_matches("http://");
-                return Some(format!("https://{host}"));
+    // Strategy 1: scan for an https:// URL containing trycloudflare.com (quick tunnel)
+    for word in line.split_whitespace() {
+        let word = word.trim_matches('|').trim();
+        if word.starts_with("https://")
+            && word.contains("trycloudflare.com")
+            && !word.contains("localhost")
+        {
+            return Some(word.to_string());
+        }
+    }
+
+    // Strategy 2: try JSON parsing (future cloudflared versions may use structured logs)
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+        for key in &["hostname", "host", "url"] {
+            if let Some(s) = v.get(key).and_then(|v| v.as_str()) {
+                let s = s.trim();
+                if !s.is_empty()
+                    && !s.starts_with("localhost")
+                    && !s.starts_with("127.")
+                    && s.contains('.')
+                {
+                    let host = s
+                        .trim_start_matches("https://")
+                        .trim_start_matches("http://");
+                    return Some(format!("https://{host}"));
+                }
             }
         }
     }
+
     None
 }
 
@@ -372,29 +386,29 @@ mod tests {
 
     // ── parse_hostname_from_log_line ─────────────────────────────────────────
 
-    /// Named tunnel: cloudflared logs the configured ingress hostname.
+    /// Real cloudflared quick-tunnel output: URL inside ASCII box.
     #[test]
-    fn test_parse_hostname_field() {
-        let line = r#"{"level":"info","hostname":"abc123.trycloudflare.com","message":"Registered tunnel connection"}"#;
+    fn test_parse_real_quick_tunnel_line() {
+        let line = "2026-02-24T09:39:33Z INF |  https://alias-shame-speed-super.trycloudflare.com                                         |";
         assert_eq!(
             parse_hostname_from_log_line(line),
-            Some("https://abc123.trycloudflare.com".to_string())
+            Some("https://alias-shame-speed-super.trycloudflare.com".to_string())
         );
     }
 
-    /// "host" field used in some routing log variants.
+    /// URL on a simpler INF line without the ASCII box.
     #[test]
-    fn test_parse_host_field() {
-        let line = r#"{"level":"info","host":"my-app.example.com","message":"Route propagating"}"#;
+    fn test_parse_plain_text_url() {
+        let line = "2026-02-24T09:39:33Z INF https://my-tunnel.trycloudflare.com";
         assert_eq!(
             parse_hostname_from_log_line(line),
-            Some("https://my-app.example.com".to_string())
+            Some("https://my-tunnel.trycloudflare.com".to_string())
         );
     }
 
-    /// "url" field emitted for quick-tunnel confirmation lines, with https:// prefix.
+    /// JSON fallback: url field with https:// prefix.
     #[test]
-    fn test_parse_url_field_with_scheme() {
+    fn test_parse_json_url_field() {
         let line =
             r#"{"level":"info","url":"https://quick-xyz.trycloudflare.com","message":"Connected"}"#;
         assert_eq!(
@@ -403,9 +417,19 @@ mod tests {
         );
     }
 
-    /// "url" field with plain http:// prefix — normalised to https://.
+    /// JSON fallback: hostname field without scheme is normalised.
     #[test]
-    fn test_parse_url_field_http_prefix_normalised() {
+    fn test_parse_json_hostname_field() {
+        let line = r#"{"level":"info","hostname":"abc.trycloudflare.com","message":"Registered"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://abc.trycloudflare.com".to_string())
+        );
+    }
+
+    /// JSON fallback: http:// normalised to https://.
+    #[test]
+    fn test_parse_json_http_normalised() {
         let line = r#"{"level":"info","url":"http://internal.example.com","message":"x"}"#;
         assert_eq!(
             parse_hostname_from_log_line(line),
@@ -413,83 +437,37 @@ mod tests {
         );
     }
 
-    /// Custom domain with multiple subdomains.
-    #[test]
-    fn test_parse_custom_subdomain() {
-        let line = r#"{"level":"info","hostname":"tunnel.staging.mycompany.io","message":"ok"}"#;
-        assert_eq!(
-            parse_hostname_from_log_line(line),
-            Some("https://tunnel.staging.mycompany.io".to_string())
-        );
-    }
-
-    /// localhost values must be ignored — they are internal cloudflared addresses.
+    /// localhost URLs must be ignored.
     #[test]
     fn test_rejects_localhost() {
-        let line = r#"{"level":"info","hostname":"localhost:2000","message":"local"}"#;
+        let line = "2026-02-24T09:39:33Z INF Settings: map[url:http://localhost:3000]";
         assert_eq!(parse_hostname_from_log_line(line), None);
     }
 
-    /// 127.x.x.x loopback addresses must be ignored.
+    /// Lines without any URL yield None.
     #[test]
-    fn test_rejects_loopback_ip() {
-        let line = r#"{"level":"info","url":"127.0.0.1:8080","message":"loop"}"#;
+    fn test_rejects_no_url() {
+        let line = "2026-02-24T09:39:33Z INF Registered tunnel connection connIndex=0";
         assert_eq!(parse_hostname_from_log_line(line), None);
     }
 
-    /// Lines without a dot (bare hostnames / single words) should be ignored.
-    #[test]
-    fn test_rejects_no_dot() {
-        let line = r#"{"level":"info","hostname":"nodomain","message":"x"}"#;
-        assert_eq!(parse_hostname_from_log_line(line), None);
-    }
-
-    /// Empty hostname field should yield None.
-    #[test]
-    fn test_rejects_empty_hostname() {
-        let line = r#"{"level":"info","hostname":"","message":"x"}"#;
-        assert_eq!(parse_hostname_from_log_line(line), None);
-    }
-
-    /// Non-JSON lines (plain text logs) should yield None without panicking.
-    #[test]
-    fn test_non_json_line_returns_none() {
-        assert_eq!(
-            parse_hostname_from_log_line("INF Starting tunnel name=test-tunnel"),
-            None
-        );
-    }
-
-    /// Completely empty string should yield None.
+    /// Empty string yields None.
     #[test]
     fn test_empty_line_returns_none() {
         assert_eq!(parse_hostname_from_log_line(""), None);
     }
 
-    /// JSON without any of the expected keys should yield None.
+    /// Named tunnel log without hostname yields None.
     #[test]
-    fn test_json_without_hostname_keys() {
-        let line = r#"{"level":"info","message":"Connection registered","connIndex":0}"#;
+    fn test_named_tunnel_no_hostname() {
+        let line = "2026-02-24T09:39:34Z INF Registered tunnel connection connIndex=0 connection=abc location=hkg10 protocol=quic";
         assert_eq!(parse_hostname_from_log_line(line), None);
     }
 
-    /// Priority: "hostname" is checked before "host" and "url".
+    /// cloudflare docs/website URLs should NOT be detected as tunnel URLs.
     #[test]
-    fn test_hostname_field_takes_priority() {
-        let line = r#"{"level":"info","hostname":"preferred.example.com","host":"secondary.example.com","url":"https://other.example.com","message":"x"}"#;
-        assert_eq!(
-            parse_hostname_from_log_line(line),
-            Some("https://preferred.example.com".to_string())
-        );
-    }
-
-    /// Whitespace-padded values should be trimmed and accepted.
-    #[test]
-    fn test_hostname_with_whitespace_trimmed() {
-        let line = r#"{"level":"info","hostname":"  spaced.example.com  ","message":"x"}"#;
-        assert_eq!(
-            parse_hostname_from_log_line(line),
-            Some("https://spaced.example.com".to_string())
-        );
+    fn test_rejects_cloudflare_docs_url() {
+        let line = "2026-02-24T09:39:30Z INF Doing so, without a Cloudflare account, is a quick way to experiment. https://developers.cloudflare.com/cloudflare-one/connections/connect-apps";
+        assert_eq!(parse_hostname_from_log_line(line), None);
     }
 }
