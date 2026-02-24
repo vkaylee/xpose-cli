@@ -15,9 +15,9 @@ cleanup() {
 trap cleanup EXIT
 
 # 2. Start Wrangler Dev in background
-echo "📥 Starting Wrangler Dev..."
-# Explicitly point to config to avoid auto-help behavior
-wrangler dev --config wrangler.jsonc --d1 DB --port 8787 --non-interactive --ip 127.0.0.1 > wrangler.log 2>&1 &
+echo "📥 Starting Wrangler Dev (Local Mode)..."
+# Use --local to avoid remote dependency
+wrangler dev --config wrangler.jsonc --local --persist --d1 DB --port 8787 --non-interactive --ip 127.0.0.1 > wrangler.log 2>&1 &
 WRANGLER_PID=$!
 echo "Wrangler PID: $WRANGLER_PID"
 

@@ -106,8 +106,8 @@ fn json_error(msg: impl Into<String>, status: u16) -> Result<Response> {
 }
 
 async fn check_rate_limit(db: &D1Database, ip: &str) -> Result<bool> {
-    let now = (Date::now().as_millis() / 1000) as i64;
-    let minute_ago = now - 60;
+    let now = (Date::now().as_millis() / 1000) as f64;
+    let minute_ago = now - 60.0;
 
     // Clean up old entries
     if let Err(e) = db
@@ -419,7 +419,7 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         return json_error(msg, status);
     }
 
-    let now = (Date::now().as_millis() / 1000) as i64;
+    let now = (Date::now().as_millis() / 1000) as f64;
 
     // 1. Check if device already has a busy tunnel
     let existing: Option<Tunnel> = db
@@ -504,7 +504,7 @@ async fn handle_heartbeat(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         Err(e) => return json_error(format!("Invalid JSON: {}", e), 400),
     };
     let db = ctx.env.d1("DB")?;
-    let now = (Date::now().as_millis() / 1000) as i64;
+    let now = (Date::now().as_millis() / 1000) as f64;
 
     let res = db
         .prepare("UPDATE tunnels SET last_heartbeat = ? WHERE device_id = ? AND status = 'BUSY'")
@@ -579,7 +579,7 @@ async fn handle_telemetry(mut req: Request, _: RouteContext<()>) -> Result<Respo
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let db = env.d1("DB").expect("D1 Database not found");
-    let sixty_mins_ago = (Date::now().as_millis() / 1000) as i64 - 3600;
+    let sixty_mins_ago = (Date::now().as_millis() / 1000) as f64 - 3600.0;
 
     let res = db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE status = 'BUSY' AND last_heartbeat < ?")
         .bind(&[sixty_mins_ago.into()])
@@ -794,5 +794,13 @@ mod tests {
         assert!(is_safe_name("my-wonderful-app"));
         assert!(!is_safe_name("microsoft-updates"));
         assert!(is_safe_name("rust-cli-tool"));
+    }
+
+    #[test]
+    fn test_version_logic() {
+        // Simple version compatibility check simulation
+        let current = "0.4.18";
+        let min = MIN_CLI_VERSION;
+        assert!(current >= min);
     }
 }
