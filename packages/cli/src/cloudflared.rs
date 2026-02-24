@@ -179,9 +179,39 @@ impl CloudflaredConfig {
             .arg("--token")
             .arg(token)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped()); // capture stderr to extract hostname
         cmd
     }
+}
+
+/// Parse the public hostname from a single cloudflared JSON log line.
+/// cloudflared outputs structured JSON logs to stderr, e.g.:
+/// {"level":"info","hostname":"abc123.trycloudflare.com",...}
+/// We also look for "host" and "url" fallbacks.
+pub fn parse_hostname_from_log_line(line: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    // Named tunnels log the hostname in different fields depending on version:
+    // - "hostname": the configured ingress hostname
+    // - "host": seen in some routing log lines
+    // - "url": seen in quick-tunnel confirmation lines
+    for key in &["hostname", "host", "url"] {
+        if let Some(s) = v.get(key).and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty()
+                // must look like a hostname/URL, not an internal address
+                && !s.starts_with("localhost")
+                && !s.starts_with("127.")
+                && s.contains('.')
+            {
+                // Normalise – strip any http/https scheme so caller decides
+                let host = s
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://");
+                return Some(format!("https://{host}"));
+            }
+        }
+    }
+    None
 }
 
 pub fn get_release_name(os: &str, arch: &str) -> Result<&'static str, String> {
