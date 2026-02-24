@@ -109,37 +109,54 @@ async fn check_rate_limit(db: &D1Database, ip: &str) -> Result<bool> {
     let now = (Date::now().as_millis() / 1000) as i64;
     let minute_ago = now - 60;
 
-    // Clean up old entries (simple way: delete if last_request is old)
-    let _ = db
+    // Clean up old entries
+    if let Err(e) = db
         .prepare("DELETE FROM rate_limits WHERE last_request < ?")
         .bind(&[minute_ago.into()])?
         .run()
-        .await;
+        .await
+    {
+        console_log!("[RateLimit] Cleanup error: {}", e);
+    }
 
     let res: Option<serde_json::Value> = db
         .prepare("SELECT request_count FROM rate_limits WHERE ip = ?")
         .bind(&[ip.into()])?
         .first(None)
-        .await?;
+        .await
+        .map_err(|e| {
+            console_log!("[RateLimit] Select error: {}", e);
+            e
+        })?;
 
     if let Some(row) = res {
         let count = row
             .get("request_count")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        if count >= 20 {
-            // 20 requests per minute
+        if count >= 30 {
+            // Increased to 30 requests per minute
             return Ok(false);
         }
-        db.prepare("UPDATE rate_limits SET request_count = request_count + 1, last_request = ? WHERE ip = ?")
-            .bind(&[now.into(), ip.into()])?
-            .run()
-            .await?;
+        db.prepare(
+            "UPDATE rate_limits SET request_count = request_count + 1, last_request = ? WHERE ip = ?",
+        )
+        .bind(&[now.into(), ip.into()])?
+        .run()
+        .await
+        .map_err(|e| {
+            console_log!("[RateLimit] Update error: {}", e);
+            e
+        })?;
     } else {
         db.prepare("INSERT INTO rate_limits (ip, last_request, request_count) VALUES (?, ?, 1)")
             .bind(&[ip.into(), now.into()])?
             .run()
-            .await?;
+            .await
+            .map_err(|e| {
+                console_log!("[RateLimit] Insert error: {}", e);
+                e
+            })?;
     }
 
     Ok(true)
@@ -379,11 +396,19 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         .unwrap_or_else(|| "unknown".to_string());
     let db = ctx.env.d1("DB")?;
 
-    if !check_rate_limit(&db, &ip).await? {
-        return json_error("Too many requests. Please wait a minute.", 429);
+    match check_rate_limit(&db, &ip).await {
+        Ok(true) => {}
+        Ok(false) => return json_error("Too many requests. Please wait a minute.", 429),
+        Err(e) => {
+            console_log!("[RequestTunnel] Rate limit check failed: {}", e);
+            return json_error(format!("Internal check failed: {}", e), 500);
+        }
     }
 
-    let body: RequestTunnelRequest = req.json().await?;
+    let body: RequestTunnelRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => return json_error(format!("Invalid JSON: {}", e), 400),
+    };
 
     if let Err((msg, status)) = validate_tunnel_request(&body) {
         return json_error(msg, status);
@@ -396,7 +421,11 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         .prepare("SELECT * FROM tunnels WHERE status = 'BUSY' AND device_id = ?")
         .bind(&[body.device_id.clone().into()])?
         .first::<Tunnel>(None)
-        .await?;
+        .await
+        .map_err(|e| {
+            console_log!("[RequestTunnel] Existing lookup failed: {}", e);
+            e
+        })?;
 
     if let Some(t) = existing {
         db.prepare("UPDATE tunnels SET last_heartbeat = ?, port = ?, protocol = ? WHERE id = ?")
@@ -409,7 +438,11 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                 t.id.clone().into(),
             ])?
             .run()
-            .await?;
+            .await
+            .map_err(|e| {
+                console_log!("[RequestTunnel] Reconnect update failed: {}", e);
+                e
+            })?;
 
         return Response::from_json(&serde_json::json!({
             "success": true,
@@ -422,7 +455,11 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
     let available: Option<Tunnel> = db
         .prepare("SELECT * FROM tunnels WHERE status = 'AVAILABLE' LIMIT 1")
         .first::<Tunnel>(None)
-        .await?;
+        .await
+        .map_err(|e| {
+            console_log!("[RequestTunnel] Available lookup failed: {}", e);
+            e
+        })?;
 
     match available {
         Some(t) => {
@@ -436,7 +473,11 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                     t.id.clone().into()
                 ])?
                 .run()
-                .await?;
+                .await
+                .map_err(|e| {
+                    console_log!("[RequestTunnel] Allocation update failed: {}", e);
+                    e
+                })?;
 
             let changes = res.meta()?.and_then(|m| m.changes).unwrap_or(0);
             if changes > 0 {
@@ -453,7 +494,10 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
 }
 
 async fn handle_heartbeat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let body: DeviceRequest = req.json().await?;
+    let body: DeviceRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => return json_error(format!("Invalid JSON: {}", e), 400),
+    };
     let db = ctx.env.d1("DB")?;
     let now = (Date::now().as_millis() / 1000) as i64;
 
@@ -461,7 +505,11 @@ async fn handle_heartbeat(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         .prepare("UPDATE tunnels SET last_heartbeat = ? WHERE device_id = ? AND status = 'BUSY'")
         .bind(&[now.into(), body.device_id.into()])?
         .run()
-        .await?;
+        .await
+        .map_err(|e| {
+            console_log!("[Heartbeat] Update failed: {}", e);
+            e
+        })?;
 
     let changes = res.meta()?.and_then(|m| m.changes).unwrap_or(0);
     if changes > 0 {

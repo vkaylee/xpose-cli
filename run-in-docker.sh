@@ -7,6 +7,7 @@ show_usage() {
     echo "Commands:"
     echo "  lint       Run cargo fmt and clippy checks"
     echo "  test       Run workspace unit tests"
+    echo "  integration Run API integration tests"
     echo "  coverage   Run test coverage measurement (Tarpaulin)"
     echo "  run        Run a custom command inside the container"
     echo "  all        Run both lint and test in single container (default)"
@@ -70,6 +71,9 @@ case "$COMMAND" in
         TEST_FLAGS="--workspace --locked --lib --bins"
         [ "$PARALLEL_TESTS" = "true" ] && TEST_FLAGS="$TEST_FLAGS -- --test-threads=4"
         docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo test $TEST_FLAGS"
+        ;;
+    integration)
+        docker compose run --rm dev bash -c "cd packages/key-server && ./tests/api_tests.sh"
         ;;
     coverage)
         docker compose run --rm dev bash -c "CARGO_INCREMENTAL=0 cargo tarpaulin --workspace --engine Llvm --out Lcov --output-dir target/coverage --lib --bins"

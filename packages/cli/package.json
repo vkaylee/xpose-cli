@@ -1,6 +1,6 @@
 {
     "name": "xpose-cli",
-    "version": "0.4.17",
+    "version": "0.4.18",
     "description": "Cloudflare Tunnel CLI for developers - Vivid TUI, auto-copy, and smart defaults.",
     "bin": {
         "xpose": "bin/cli.js"

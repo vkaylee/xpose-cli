@@ -44,3 +44,4 @@ xpose.yaml
 # OS
 .DS_Store
 Thumbs.db
+packages/key-server/wrangler.log
