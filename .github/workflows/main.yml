@@ -127,7 +127,7 @@ jobs:
           cache-from: type=gha
       - name: Build Key Server
         run: |
-          NO_BUILD=true ./run-in-docker.sh run bash -c "cargo install worker-build && cd packages/key-server && worker-build --release"
+          NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && worker-build --release"
       - name: Archive Key Server Build
         run: |
           tar -czvf key-server-build.tar.gz packages/key-server/build packages/key-server/wrangler.jsonc packages/key-server/migrations
