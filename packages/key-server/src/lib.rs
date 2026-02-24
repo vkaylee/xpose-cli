@@ -665,8 +665,16 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         None => {
             // No pool tunnel available — try dynamic provisioning via Cloudflare API
             let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
-            let account_id = ctx.env.var("CLOUDFLARE_ACCOUNT_ID").map(|v| v.to_string()).ok();
-            let tunnel_domain = ctx.env.var("CLOUDFLARE_TUNNEL_DOMAIN").map(|v| v.to_string()).ok();
+            let account_id = ctx
+                .env
+                .var("CLOUDFLARE_ACCOUNT_ID")
+                .map(|v| v.to_string())
+                .ok();
+            let tunnel_domain = ctx
+                .env
+                .var("CLOUDFLARE_TUNNEL_DOMAIN")
+                .map(|v| v.to_string())
+                .ok();
 
             match (api_token, account_id, tunnel_domain) {
                 (Some(api_token), Some(account_id), Some(tunnel_domain)) => {
@@ -801,11 +809,7 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
                 .await?;
 
             // Clean up from Cloudflare API asynchronously (best-effort)
-            let api_token = ctx
-                .env
-                .var(CF_TUNNEL_TOKEN_VAR)
-                .map(|v| v.to_string())
-                .ok();
+            let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
             let account_id = ctx
                 .env
                 .var("CLOUDFLARE_ACCOUNT_ID")
