@@ -15,7 +15,7 @@ services:
       - SCCACHE_DIR=/workspace/.sccache
       - RUSTC_WRAPPER=sccache
       - CARGO_HOME=/usr/local/cargo
-      - CLOUDFLARE_API_TOKEN
+      - CLOUDFLARE_API_TOKEN # Required by wrangler internally (mapped from WORKER_TOKEN in CI)
       - CLOUDFLARE_API_WORKER_TOKEN
     stdin_open: true
     tty: true
