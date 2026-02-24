@@ -38,8 +38,8 @@ pub struct DashboardApp {
     tick_count: u64,
     i18n: I18n,
     sys: sysinfo::System,
-    pid: sysinfo::Pid,
     api_url: String,
+    server_config: Option<crate::api::ServerConfig>,
 }
 
 impl DashboardApp {
@@ -51,7 +51,6 @@ impl DashboardApp {
             table_state.select(Some(0));
         }
         let sys = sysinfo::System::new();
-        let pid = sysinfo::Pid::from(std::process::id() as usize);
 
         Self {
             registry,
@@ -67,8 +66,8 @@ impl DashboardApp {
             tick_count: 0,
             i18n,
             sys,
-            pid,
             api_url,
+            server_config: None,
         }
     }
 
@@ -118,7 +117,7 @@ impl DashboardApp {
 
     fn on_tick(&mut self) {
         self.sys.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[self.pid]),
+            sysinfo::ProcessesToUpdate::All,
             false,
             sysinfo::ProcessRefreshKind::nothing().with_memory(),
         );
@@ -134,6 +133,15 @@ impl DashboardApp {
             if let Ok(res) = self.metrics_client.get(&url).send() {
                 if let Ok(stats) = res.json::<GlobalStats>() {
                     self.global_stats = stats;
+                }
+            }
+        }
+
+        if self.server_config.is_none() || self.tick_count.is_multiple_of(120) {
+            let url = format!("{}/api/config", self.api_url);
+            if let Ok(res) = self.metrics_client.get(&url).send() {
+                if let Ok(config) = res.json::<crate::api::ServerConfig>() {
+                    self.server_config = Some(config);
                 }
             }
         }
@@ -260,10 +268,7 @@ impl DashboardApp {
             .split(f.size());
 
         // Header
-        let ram_bytes = self.sys.process(self.pid).map(|p| p.memory()).unwrap_or(0);
-        let ram_formatted = crate::ui::Ui::format_size(ram_bytes);
-
-        let header_content = vec![
+        let mut header_content = vec![
             ratatui::text::Span::styled(
                 format!(" {} ", self.i18n.t("dashboard_title")),
                 Style::default()
@@ -281,14 +286,22 @@ impl DashboardApp {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
-            ratatui::text::Span::raw(" | "),
-            ratatui::text::Span::styled(
-                format!("{}: {}", self.i18n.t("ram_usage"), ram_formatted),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ),
         ];
+
+        let display_url = self.api_url.replace("https://", "").replace("http://", "");
+        header_content.push(ratatui::text::Span::raw(" | "));
+        header_content.push(ratatui::text::Span::styled(
+            format!("Server: {}", display_url),
+            Style::default().fg(Color::Blue),
+        ));
+
+        if let Some(config) = &self.server_config {
+            header_content.push(ratatui::text::Span::raw(" | "));
+            header_content.push(ratatui::text::Span::styled(
+                format!("Min-CLI: v{}", config.min_cli_version),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
 
         let header = Paragraph::new(ratatui::text::Line::from(header_content)).block(
             Block::default()
@@ -302,7 +315,7 @@ impl DashboardApp {
             .add_modifier(Modifier::REVERSED)
             .fg(Color::Yellow);
         let normal_style = Style::default().fg(Color::White);
-        let header_cells = ["PID", "Port", "Rx Speed", "Tx Speed", "Public URL"]
+        let header_cells = ["Port", "Protocol", "Public URL"]
             .iter()
             .map(|h| Cell::from(*h).style(Style::default().fg(Color::Green)));
         let header = Row::new(header_cells)
@@ -311,23 +324,13 @@ impl DashboardApp {
             .bottom_margin(1);
 
         let rows = self.tunnels.iter().map(|item| {
-            let m = self.metrics.get(&item.pid);
-            let rx = m
-                .map(|m| crate::ui::Ui::format_size(m.rx_speed) + "/s")
-                .unwrap_or_else(|| "0 B/s".to_string());
-            let tx = m
-                .map(|m| crate::ui::Ui::format_size(m.tx_speed) + "/s")
-                .unwrap_or_else(|| "0 B/s".to_string());
-
             let cells = vec![
-                Cell::from(item.pid.to_string()).style(Style::default().fg(Color::DarkGray)),
                 Cell::from(item.port.to_string()).style(
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Cell::from(rx).style(Style::default().fg(Color::Cyan)),
-                Cell::from(tx).style(Style::default().fg(Color::Magenta)),
+                Cell::from(item.protocol.to_uppercase()).style(Style::default().fg(Color::Magenta)),
                 Cell::from(item.url.clone()).style(Style::default().fg(Color::Green)),
             ];
             Row::new(cells).height(1)
@@ -336,11 +339,9 @@ impl DashboardApp {
         let t = Table::new(
             rows,
             [
-                Constraint::Length(8),
-                Constraint::Length(8),
-                Constraint::Length(15),
-                Constraint::Length(15),
-                Constraint::Min(30),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Min(40),
             ],
         )
         .header(header)
@@ -358,14 +359,6 @@ impl DashboardApp {
         // Details / Metrics Panel
         if let Some(i) = self.table_state.selected() {
             if let Some(tunnel) = self.tunnels.get(i) {
-                let m = self.metrics.get(&tunnel.pid);
-                let rx_total = m
-                    .map(|m| crate::ui::Ui::format_size(m.rx_bytes))
-                    .unwrap_or_else(|| "0 B".to_string());
-                let tx_total = m
-                    .map(|m| crate::ui::Ui::format_size(m.tx_bytes))
-                    .unwrap_or_else(|| "0 B".to_string());
-
                 let detail_area = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -409,24 +402,6 @@ impl DashboardApp {
                             tunnel.protocol.to_uppercase(),
                             Style::default().fg(Color::Magenta),
                         ),
-                    ]),
-                    ratatui::text::Line::from(vec![
-                        ratatui::text::Span::styled(
-                            " Total Rx: ",
-                            Style::default()
-                                .fg(Color::Blue)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        ratatui::text::Span::raw(rx_total),
-                    ]),
-                    ratatui::text::Line::from(vec![
-                        ratatui::text::Span::styled(
-                            " Total Tx: ",
-                            Style::default()
-                                .fg(Color::Blue)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        ratatui::text::Span::raw(tx_total),
                     ]),
                 ];
 
@@ -647,8 +622,6 @@ mod tests {
         let content = format!("{:?}", buffer);
         assert!(content.contains("8080"));
         assert!(content.contains("TCP"));
-        assert!(content.contains("1.0 KB")); // rx_bytes
-        assert!(content.contains("2.0 KB")); // tx_bytes
     }
 
     #[test]
