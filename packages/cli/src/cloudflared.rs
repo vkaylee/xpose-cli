@@ -252,10 +252,23 @@ mod tests {
             "cloudflared-linux-amd64"
         );
         assert_eq!(
+            get_release_name("linux", "aarch64").unwrap(),
+            "cloudflared-linux-arm64"
+        );
+        assert_eq!(
+            get_release_name("macos", "x86_64").unwrap(),
+            "cloudflared-darwin-amd64.tgz"
+        );
+        assert_eq!(
+            get_release_name("macos", "aarch64").unwrap(),
+            "cloudflared-darwin-arm64.tgz"
+        );
+        assert_eq!(
             get_release_name("windows", "x86_64").unwrap(),
             "cloudflared-windows-amd64.exe"
         );
         assert!(get_release_name("unknown", "x86_64").is_err());
+        assert!(get_release_name("linux", "ppc64le").is_err());
     }
 
     #[test]
@@ -300,6 +313,25 @@ mod tests {
         // Create dummy bin
         fs::write(&bin_path, "dummy").unwrap();
         assert!(config.is_installed());
+    }
+
+    #[test]
+    fn test_cloudflared_config_from_env_variations() {
+        let home = Some("/home/user".to_string());
+        let temp = Some(PathBuf::from("/tmp"));
+        let proj = Some(PathBuf::from("/workspace"));
+
+        // Case: Home directory only
+        let config = CloudflaredConfig::from_env(home.clone(), None, None);
+        assert!(config.bin_path.to_str().unwrap().contains("/home/user"));
+
+        // Case: Temp directory only
+        let config = CloudflaredConfig::from_env(None, temp.clone(), None);
+        assert!(config.bin_path.to_str().unwrap().contains("/tmp"));
+
+        // Case: Project root only
+        let config = CloudflaredConfig::from_env(None, None, proj.clone());
+        assert!(config.bin_path.to_str().unwrap().contains("/workspace"));
     }
 
     #[test]

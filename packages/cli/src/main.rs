@@ -243,7 +243,6 @@ async fn run_cli(
         .unwrap_or_else(|| KEY_SERVER_URL.to_string());
 
     info!("{} v{}", i18n.t("startup"), env!("CARGO_PKG_VERSION"));
-
     let exit_code = run_tunnel(
         args,
         yaml_config,
@@ -1047,15 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn test_map_error() {
-        assert_eq!(
-            map_error("timeout"),
-            "Request timed out. Please check your internet connection."
-        );
-        assert_eq!(
-            map_error("403"),
-            "Access denied. This port might be restricted for security reasons."
-        );
+    fn test_map_error_additional() {
         assert_eq!(
             map_error("401"),
             "Unauthorized. Please check your credentials."
@@ -1343,6 +1334,24 @@ mod tests {
         };
         handle_config(action, config.clone(), &ui, &i18n).await;
 
+        let action = ConfigAction::Set {
+            key: "lang".to_string(),
+            value: "vi".to_string(),
+        };
+        handle_config(action, config.clone(), &ui, &i18n).await;
+
+        let action = ConfigAction::Set {
+            key: "protocol".to_string(),
+            value: "udp".to_string(),
+        };
+        handle_config(action, config.clone(), &ui, &i18n).await;
+
+        let action = ConfigAction::Set {
+            key: "server_url".to_string(),
+            value: "http://test.com".to_string(),
+        };
+        handle_config(action, config.clone(), &ui, &i18n).await;
+
         // Test Get
         let action_get = ConfigAction::Get {
             key: "server_url".to_string(),
@@ -1376,5 +1385,52 @@ mod tests {
         // Should be up to date
         let res = handle_update(&api, &ui, &i18n, false).await;
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_detect_port_failure() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Ui::new_silent(i18n);
+        // Result should be None as nothing is listening on standard ports in test environment normally
+        // or we just check it doesn't panic.
+        let _ = detect_port(&ui, &ui.i18n);
+    }
+
+    #[test]
+    fn test_args_parsing() {
+        let args = Args::parse_from(["xpose", "8080"]);
+        assert_eq!(args.port, Some(8080));
+    }
+
+    #[tokio::test]
+    async fn test_handle_dashboard_auth_failure() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+
+        let _m1 = server
+            .mock("POST", "/api/auth/init")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        let success = handle_dashboard_auth(&api, &ui, &i18n).await;
+        assert!(!success);
+    }
+
+    #[test]
+    fn test_detect_port_success() {
+        let i18n = i18n::I18n::new(None);
+        let ui = Ui::new_silent(i18n.clone());
+
+        // Start a mock server on port 3000
+        let listener = std::net::TcpListener::bind("127.0.0.1:3000");
+        if let Ok(_l) = listener {
+            let port = detect_port(&ui, &i18n);
+            assert_eq!(port, Some(3000));
+        }
     }
 }

@@ -221,6 +221,15 @@ async fn handle_admin_tunnels(mut req: Request, ctx: RouteContext<()>) -> Result
     }
 }
 
+pub fn get_verify_url(url: &Url, session_id: &str) -> String {
+    format!(
+        "{}://{}/api/auth/verify?s={}",
+        url.scheme(),
+        url.host_str().unwrap_or("localhost"),
+        session_id
+    )
+}
+
 async fn handle_auth_init(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let db = ctx.env.d1("DB")?;
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -232,12 +241,7 @@ async fn handle_auth_init(req: Request, ctx: RouteContext<()>) -> Result<Respons
         .await?;
 
     let url = req.url()?;
-    let verify_url = format!(
-        "{}://{}/api/auth/verify?s={}",
-        url.scheme(),
-        url.host_str().unwrap_or("localhost"),
-        session_id
-    );
+    let verify_url = get_verify_url(&url, &session_id);
 
     Response::from_json(&AuthInitResponse {
         session_id,
@@ -359,6 +363,17 @@ async fn handle_auth_verify_post(mut req: Request, ctx: RouteContext<()>) -> Res
     Ok(Response::ok(html)?.with_headers(headers))
 }
 
+pub fn validate_tunnel_request(
+    body: &RequestTunnelRequest,
+) -> Result<(), (String, u16)> {
+    if let Some(p) = body.port {
+        if !ALLOWED_PORTS.contains(&p) {
+            return Err((format!("Port {p} is restricted for security reasons."), 403));
+        }
+    }
+    Ok(())
+}
+
 async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let ip = req
         .headers()
@@ -372,32 +387,8 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
 
     let body: RequestTunnelRequest = req.json().await?;
 
-    // QR Auth Check
-    if let (Some(sid), Some(token)) = (body.session_id, body.auth_token) {
-        let session: Option<AuthSession> = db
-            .prepare(
-                "SELECT * FROM auth_sessions WHERE id = ? AND auth_token = ? AND status = 'VERIFIED'",
-            )
-            .bind(&[sid.clone().into(), token.into()])?
-            .first::<AuthSession>(None)
-            .await?;
-
-        if session.is_none() {
-            return json_error("Session not verified or invalid", 401);
-        }
-
-        // Mark session as USED
-        db.prepare("UPDATE auth_sessions SET status = 'USED' WHERE id = ?")
-            .bind(&[sid.into()])?
-            .run()
-            .await?;
-    }
-
-    // Port restriction
-    if let Some(p) = body.port {
-        if !ALLOWED_PORTS.contains(&p) {
-            return json_error(format!("Port {p} is restricted for security reasons."), 403);
-        }
+    if let Err((msg, status)) = validate_tunnel_request(&body) {
+        return json_error(msg, status);
     }
 
     let now = (Date::now().as_millis() / 1000) as i64;
@@ -494,17 +485,10 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     Response::from_json(&serde_json::json!({"success": true}))
 }
 
-async fn handle_stats(_: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let db = ctx.env.d1("DB")?;
-    let res = db
-        .prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
-        .all()
-        .await?;
-
+pub fn calculate_stats(rows: Vec<serde_json::Value>) -> (u64, u64, u64) {
     let mut busy = 0;
     let mut available = 0;
 
-    let rows: Vec<serde_json::Value> = res.results()?;
     for row in rows {
         let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
         let count = row.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -515,8 +499,21 @@ async fn handle_stats(_: Request, ctx: RouteContext<()>) -> Result<Response> {
         }
     }
 
+    (busy, available, busy + available)
+}
+
+async fn handle_stats(_: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let db = ctx.env.d1("DB")?;
+    let res = db
+        .prepare("SELECT status, COUNT(*) as count FROM tunnels GROUP BY status")
+        .all()
+        .await?;
+
+    let rows: Vec<serde_json::Value> = res.results()?;
+    let (busy, available, total) = calculate_stats(rows);
+
     Response::from_json(&serde_json::json!({
-        "total": busy + available,
+        "total": total,
         "busy": busy,
         "available": available
     }))
@@ -675,5 +672,73 @@ mod tests {
         let html = get_verify_html(sid);
         assert!(html.contains(sid));
         assert!(html.contains("Confirm Connection"));
+    }
+    #[test]
+    fn test_get_verify_url() {
+        let url = Url::parse("https://api.xpose.cloud/api/auth/init").unwrap();
+        let sid = "session-123";
+        let verify_url = get_verify_url(&url, sid);
+        assert_eq!(verify_url, "https://api.xpose.cloud/api/auth/verify?s=session-123");
+    }
+
+    #[test]
+    fn test_validate_tunnel_request() {
+        // Allowed port
+        let body = RequestTunnelRequest {
+            device_id: "d1".to_string(),
+            port: Some(80),
+            protocol: None,
+            session_id: None,
+            auth_token: None,
+        };
+        assert!(validate_tunnel_request(&body).is_ok());
+
+        // Forbidden port
+        let body = RequestTunnelRequest {
+            device_id: "d1".to_string(),
+            port: Some(25),
+            protocol: None,
+            session_id: None,
+            auth_token: None,
+        };
+        let res = validate_tunnel_request(&body);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().1, 403);
+
+        // No port (should be allowed)
+        let body = RequestTunnelRequest {
+            device_id: "d1".to_string(),
+            port: None,
+            protocol: None,
+            session_id: None,
+            auth_token: None,
+        };
+        assert!(validate_tunnel_request(&body).is_ok());
+    }
+    #[test]
+    fn test_calculate_stats() {
+        let rows = vec![
+            serde_json::json!({"status": "BUSY", "count": 5}),
+            serde_json::json!({"status": "AVAILABLE", "count": 10}),
+        ];
+        let (busy, available, total) = calculate_stats(rows);
+        assert_eq!(busy, 5);
+        assert_eq!(available, 10);
+        assert_eq!(total, 15);
+
+        // Empty rows
+        let (busy, available, total) = calculate_stats(vec![]);
+        assert_eq!(busy, 0);
+        assert_eq!(available, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_is_safe_name_more() {
+        assert!(!is_safe_name("my-bank-app"));
+        assert!(!is_safe_name("safe-login-here"));
+        assert!(is_safe_name("my-wonderful-app"));
+        assert!(!is_safe_name("microsoft-updates"));
+        assert!(is_safe_name("rust-cli-tool"));
     }
 }

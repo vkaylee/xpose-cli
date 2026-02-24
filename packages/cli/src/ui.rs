@@ -358,4 +358,35 @@ mod tests {
         let ui_normal = Ui::new(i18n);
         assert!(!ui_normal.silent);
     }
+    #[test]
+    fn test_ui_silent_mode() {
+        let i18n = I18n::new(None);
+        let ui = Ui::new(i18n);
+        assert!(!ui.silent);
+        
+        // These should not panic
+        ui.success("test");
+        ui.error("test");
+        ui.info("test");
+        ui.draw_connected_panel(80, "http://test", "tcp");
+        ui.draw_auth_panel();
+    }
+
+    #[test]
+    fn test_ui_draw_live_metrics() {
+        let i18n = I18n::new(None);
+        let mut ui = Ui::new(i18n);
+        // Smoke test to ensure it doesn't panic with various values
+        ui.draw_live_metrics(1024, 2048, 100, 200, 50, 1024 * 1024);
+        ui.draw_live_metrics(0, 0, 0, 0, 0, 0);
+        ui.draw_live_metrics(1_000_000, 2_000_000, 500_000, 500_000, 10, 100_000_000);
+    }
+
+    #[test]
+    fn test_ui_draw_qr() {
+        let i18n = I18n::new(None);
+        let ui = Ui::new(i18n);
+        // Smoke test for QR drawing
+        ui.draw_qr("https://xpose.cloud/verify/123", "Scan to Verify");
+    }
 }

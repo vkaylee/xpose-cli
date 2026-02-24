@@ -95,4 +95,21 @@ mod tests {
         let loaded = XposeConfig::load_from_path(&path);
         assert_eq!(loaded.port, Some(9999));
     }
+    #[test]
+    fn test_config_load_invalid() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("invalid.yaml");
+        fs::write(&config_path, "invalid: [::] yaml").unwrap();
+
+        let config = XposeConfig::load_from_path(&config_path);
+        assert_eq!(config.port, None); // Should return default
+    }
+
+    #[test]
+    fn test_config_save_error() {
+        let mut config = XposeConfig::default();
+        let invalid_path = std::path::PathBuf::from("/non/existent/path/config.yaml");
+        let res = config.save_to_path(&invalid_path);
+        assert!(res.is_err());
+    }
 }

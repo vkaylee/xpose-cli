@@ -468,6 +468,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_request_tunnel_unknown_error() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let _mock = server
+            .mock("POST", "/api/request")
+            .with_status(500)
+            .with_body(r#"{"success": false}"#)
+            .create_async()
+            .await;
+        let client = ApiClient::new(url);
+        let res = client.request_tunnel("d1", None, None, None, None).await;
+        assert!(res.is_err());
+        assert!(res.err().unwrap().contains("Unknown server error"));
+    }
+
+    #[tokio::test]
     async fn test_release_tunnel_failure() {
         let mut server = Server::new_async().await;
         let url = server.url();

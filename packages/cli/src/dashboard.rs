@@ -667,4 +667,23 @@ mod tests {
         // but it covers the iteration logic.
         app.update_metrics();
     }
+
+    #[test]
+    fn test_dashboard_on_tick_with_mock() {
+        let mut server = mockito::Server::new();
+        let url = server.url();
+        let _m = server
+            .mock("GET", "/api/stats")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"busy": 5, "available": 10, "total": 15}"#)
+            .create();
+
+        let mut app = DashboardApp::new(url, I18n::new(None));
+        app.tick_count = 10; // Trigger stats fetch
+        app.on_tick();
+
+        assert_eq!(app.global_stats.busy, 5);
+        assert_eq!(app.global_stats.available, 10);
+    }
 }

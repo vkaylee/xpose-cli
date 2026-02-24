@@ -12,6 +12,9 @@ COPY --from=planner /workspace/recipe.json recipe.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev musl-tools build-essential cmake curl \
     gcc-aarch64-linux-gnu \
+    && dpkg --add-architecture arm64 \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    musl-dev:arm64 \
     && rm -rf /var/lib/apt/lists/* \
     && echo '#!/bin/sh' > /usr/bin/aarch64-linux-musl-gcc \
     && echo 'exec aarch64-linux-gnu-gcc -specs /usr/lib/aarch64-linux-musl/musl-gcc.specs "$@"' >> /usr/bin/aarch64-linux-musl-gcc \
@@ -23,9 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Stage 3: Base ---
 FROM rust:1.93.1-slim-bookworm AS base
 WORKDIR /workspace
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dpkg --add-architecture arm64 \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl git pkg-config libssl-dev musl-tools build-essential cmake \
     gcc-aarch64-linux-gnu \
+    musl-dev:arm64 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
