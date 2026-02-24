@@ -130,7 +130,7 @@ jobs:
       - name: Deploy to Cloudflare Workers
         env:
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_WORKER_TOKEN }}
         run: |
           sed -i "s/__CLOUDFLARE_D1_ID__/${CLOUDFLARE_D1_ID}/g" packages/key-server/wrangler.jsonc
           NO_BUILD=true ./run-in-docker.sh run bash -c "cd packages/key-server && wrangler d1 migrations apply tunnel-db --remote && wrangler deploy"

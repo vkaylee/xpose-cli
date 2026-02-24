@@ -9,13 +9,19 @@ To enable automated testing and professional-grade deployment, you must add the 
 | Secret Name | Purpose | How to generate |
 | :--- | :--- | :--- |
 | `NPM_TOKEN` | Automated NPM publishing | [npmjs.com](https://www.npmjs.com/) > Access Tokens > **Automation Type** |
-| `CLOUDFLARE_API_TOKEN` | Auto-deploy Key Server | [dash.cloudflare.com](https://dash.cloudflare.com/) > Profile > API Tokens > **Edit Workers** |
+| `CLOUDFLARE_API_WORKER_TOKEN` | Auto-deploy Key Server (CI/CD) | [dash.cloudflare.com](https://dash.cloudflare.com/) > Profile > API Tokens > **Edit Workers** |
+| `CLOUDFLARE_API_TUNNEL_TOKEN` | Dynamic tunnel provisioning at runtime | [dash.cloudflare.com](https://dash.cloudflare.com/) > Profile > API Tokens > **Cloudflare Tunnel: Edit** |
 
 ### 🔍 Token Permissions (Cloudflare)
-Ensure your `CLOUDFLARE_API_TOKEN` has the following permissions:
+
+**`CLOUDFLARE_API_WORKER_TOKEN`** — used by CI/CD to deploy the Worker:
 - **Account / Workers Scripts / Edit**
 - **Account / D1 / Edit**
 - **User / Memberships / Read**
+
+**`CLOUDFLARE_API_TUNNEL_TOKEN`** — used at runtime by the Worker to provision tunnels dynamically (optional):
+- **Account / Cloudflare Tunnel / Edit**
+- **Zone / DNS / Edit** (for routing DNS records)
 
 ---
 

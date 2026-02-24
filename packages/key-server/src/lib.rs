@@ -214,6 +214,14 @@ struct DeviceRequest {
 pub const MIN_CLI_VERSION: &str = "0.4.17";
 pub const RECOMMENDED_VERSION: &str = "0.4.21";
 
+/// Cloudflare API token secret used by CI/CD (`wrangler deploy`).
+/// Requires: Workers Scripts / Edit, D1 / Edit, User Memberships / Read.
+pub const CF_WORKER_TOKEN_VAR: &str = "CLOUDFLARE_API_WORKER_TOKEN";
+
+/// Cloudflare API token secret used at runtime by the Worker to provision
+/// tunnels dynamically. Requires: Cloudflare Tunnel / Edit, Zone DNS / Edit.
+pub const CF_TUNNEL_TOKEN_VAR: &str = "CLOUDFLARE_API_TUNNEL_TOKEN";
+
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
 pub const BANNED_KEYWORDS: &[&str] = &[
@@ -656,9 +664,9 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         }
         None => {
             // No pool tunnel available — try dynamic provisioning via Cloudflare API
-            let api_token = ctx.env.var("CF_API_TOKEN").map(|v| v.to_string()).ok();
-            let account_id = ctx.env.var("CF_ACCOUNT_ID").map(|v| v.to_string()).ok();
-            let tunnel_domain = ctx.env.var("CF_TUNNEL_DOMAIN").map(|v| v.to_string()).ok();
+            let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
+            let account_id = ctx.env.var("CLOUDFLARE_ACCOUNT_ID").map(|v| v.to_string()).ok();
+            let tunnel_domain = ctx.env.var("CLOUDFLARE_TUNNEL_DOMAIN").map(|v| v.to_string()).ok();
 
             match (api_token, account_id, tunnel_domain) {
                 (Some(api_token), Some(account_id), Some(tunnel_domain)) => {
@@ -793,8 +801,16 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
                 .await?;
 
             // Clean up from Cloudflare API asynchronously (best-effort)
-            let api_token = ctx.env.var("CF_API_TOKEN").map(|v| v.to_string()).ok();
-            let account_id = ctx.env.var("CF_ACCOUNT_ID").map(|v| v.to_string()).ok();
+            let api_token = ctx
+                .env
+                .var(CF_TUNNEL_TOKEN_VAR)
+                .map(|v| v.to_string())
+                .ok();
+            let account_id = ctx
+                .env
+                .var("CLOUDFLARE_ACCOUNT_ID")
+                .map(|v| v.to_string())
+                .ok();
             if let (Some(api_token), Some(account_id), Some(cf_tunnel_id)) =
                 (api_token, account_id, t.cf_tunnel_id.clone())
             {
@@ -1083,5 +1099,28 @@ mod tests {
         let current = "0.4.18";
         let min = MIN_CLI_VERSION;
         assert!(current >= min);
+    }
+
+    #[test]
+    fn test_cf_tunnel_token_var_name() {
+        // Ensures the runtime secret name stays in sync with wrangler secret put docs
+        // and DEPLOYMENT.md. Changing this constant without updating docs/infra will
+        // cause dynamic tunnel provisioning to silently fail.
+        assert_eq!(CF_TUNNEL_TOKEN_VAR, "CLOUDFLARE_API_TUNNEL_TOKEN");
+    }
+
+    #[test]
+    fn test_cf_worker_token_var_name() {
+        // Ensures the CI/CD secret name stays in sync with main.yml and DEPLOYMENT.md.
+        // This token is injected by GitHub Actions into CLOUDFLARE_API_TOKEN env
+        // expected by `wrangler deploy`.
+        assert_eq!(CF_WORKER_TOKEN_VAR, "CLOUDFLARE_API_WORKER_TOKEN");
+    }
+
+    #[test]
+    fn test_cf_token_vars_are_distinct() {
+        // Worker deploy token and tunnel provisioning token must never share the same
+        // secret name — each requires different Cloudflare permissions (least privilege).
+        assert_ne!(CF_WORKER_TOKEN_VAR, CF_TUNNEL_TOKEN_VAR);
     }
 }
