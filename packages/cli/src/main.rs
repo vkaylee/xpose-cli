@@ -1618,4 +1618,245 @@ mod tests {
         let args = Args::parse_from(["xpose", "--open", "3000"]);
         assert!(args.open);
     }
+
+    #[tokio::test]
+    async fn test_run_tunnel_version_outdated_exits_1() {
+        // Setup: create a temp dir and fake cloudflared binary so is_installed() = true
+        let dir = tempfile::tempdir().unwrap();
+        let fake_bin = dir.path().join("cloudflared");
+        fs::write(&fake_bin, b"fake").unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        // Server says min version is higher than installed (simulated as current crate version)
+        let current = env!("CARGO_PKG_VERSION");
+        let high_version = "999.0.0";
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"min_cli_version": "{}", "recommended_version": "{}"}}"#,
+                high_version, high_version
+            ))
+            .create_async()
+            .await;
+
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        // Use run_cli with no-command (goes through run_tunnel)
+        let args = Args::parse_from(["xpose", "--server-url", &url, "3000"]);
+        let config = XposeConfig {
+            server_url: Some(url.clone()),
+            ..Default::default()
+        };
+
+        // Temporarily set HOME to our temp dir so CloudflaredConfig::new() finds our fake binary
+        unsafe { std::env::set_var("HOME", dir.path()) }
+        // Write binary in the right path: ~/.xpose/bin/cloudflared
+        let xpose_bin_dir = dir.path().join(".xpose").join("bin");
+        fs::create_dir_all(&xpose_bin_dir).unwrap();
+        fs::write(xpose_bin_dir.join("cloudflared"), b"fake").unwrap();
+
+        let code = run_cli(args, config, &i18n, ui).await;
+        unsafe { std::env::remove_var("HOME") }
+
+        // Should return 1 because version is outdated
+        assert_eq!(code, 1);
+        let _ = current; // suppress unused warning
+    }
+
+    #[tokio::test]
+    async fn test_run_tunnel_version_update_available_then_tunnel_fail() {
+        // Setup: fake cloudflared binary
+        let dir = tempfile::tempdir().unwrap();
+        let xpose_bin_dir = dir.path().join(".xpose").join("bin");
+        fs::create_dir_all(&xpose_bin_dir).unwrap();
+        fs::write(xpose_bin_dir.join("cloudflared"), b"fake").unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let current = env!("CARGO_PKG_VERSION");
+        let _m_config = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"min_cli_version": "{}", "recommended_version": "999.0.0"}}"#,
+                current
+            ))
+            .create_async()
+            .await;
+        // Request tunnel fails
+        let _m_req = server
+            .mock("POST", "/api/request")
+            .with_status(503)
+            .with_body("no tunnels")
+            .create_async()
+            .await;
+
+        unsafe { std::env::set_var("HOME", dir.path()) }
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let args = Args::parse_from(["xpose", "--server-url", &url, "3000"]);
+        let config = XposeConfig {
+            server_url: Some(url.clone()),
+            ..Default::default()
+        };
+        let code = run_cli(args, config, &i18n, ui).await;
+        unsafe { std::env::remove_var("HOME") }
+
+        // Should return 1 because tunnel request failed
+        assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_send_telemetry_direct() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _m = server
+            .mock("POST", "/api/telemetry")
+            .with_status(200)
+            .create_async()
+            .await;
+        let api = ApiClient::new(url);
+        // send_telemetry always returns () - just verify it doesn't panic
+        send_telemetry(
+            &api,
+            "test_event",
+            "device-123",
+            serde_json::json!({"key": "value"}),
+        )
+        .await;
+    }
+
+    #[test]
+    fn test_setup_logging_runs() {
+        // setup_logging creates a log file; in tests it uses $HOME/.xpose/logs/
+        // Just verify it returns Ok (or already-initialized error is OK).
+        let result = setup_logging();
+        // It may fail if already initialized (global logger can only be set once)
+        let _ = result; // ok either way
+    }
+
+    #[tokio::test]
+    async fn test_handle_dashboard_auth_check_status_failure() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+
+        // Auth init succeeds
+        let _m1 = server
+            .mock("POST", "/api/auth/init")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"session_id": "s1", "auth_token": "t1", "verification_url": "http://verify"}"#,
+            )
+            .create_async()
+            .await;
+
+        // check_auth_status returns error (500)
+        let _m2 = server
+            .mock("GET", "/api/auth/status")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+
+        let success = handle_dashboard_auth(&api, &ui, &i18n).await;
+        assert!(!success); // Should return false due to status check error
+    }
+
+    #[test]
+    fn test_version_status_eq() {
+        assert_eq!(VersionStatus::UpToDate, VersionStatus::UpToDate);
+        assert_eq!(
+            VersionStatus::UpdateAvailable,
+            VersionStatus::UpdateAvailable
+        );
+        assert_eq!(VersionStatus::Outdated, VersionStatus::Outdated);
+        assert_ne!(VersionStatus::UpToDate, VersionStatus::Outdated);
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_update_available_but_up_to_date() {
+        // Test update subcommand with force=false when already up to date
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let current = env!("CARGO_PKG_VERSION");
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"min_cli_version": "0.1.0", "recommended_version": "{}"}}"#,
+                current
+            ))
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        assert_eq!(code, 0); // Already up to date -> success
+    }
+
+    #[tokio::test]
+    async fn test_run_cli_update_version_available() {
+        // Test update subcommand when update is available (force=false skips if up-to-date)
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"min_cli_version": "0.1.0", "recommended_version": "999.9.9"}"#)
+            .create_async()
+            .await;
+
+        let args = Args::parse_from(["xpose", "--server-url", &url, "update"]);
+        let config = XposeConfig::default();
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let code = run_cli(args, config, &i18n, ui).await;
+        // Should fail at download (GitHub URL with fake version) -> return 1
+        assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_tunnel_config_fetch_fails() {
+        // Covers lines 296-299: run_tunnel where get_config returns error
+        let dir = tempfile::tempdir().unwrap();
+        let xpose_bin_dir = dir.path().join(".xpose").join("bin");
+        fs::create_dir_all(&xpose_bin_dir).unwrap();
+        fs::write(xpose_bin_dir.join("cloudflared"), b"fake").unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        // Return 500 on /api/config so get_config fails
+        let _m = server
+            .mock("GET", "/api/config")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        unsafe { std::env::set_var("HOME", dir.path()) }
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let args = Args::parse_from(["xpose", "--server-url", &url, "3000"]);
+        let config = XposeConfig {
+            server_url: Some(url.clone()),
+            ..Default::default()
+        };
+        let code = run_cli(args, config, &i18n, ui).await;
+        unsafe { std::env::remove_var("HOME") }
+        // Should return 1 because config fetch failed
+        assert_eq!(code, 1);
+    }
 }

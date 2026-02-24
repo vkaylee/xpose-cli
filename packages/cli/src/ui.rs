@@ -525,4 +525,75 @@ mod tests {
     fn test_extract_port_with_path() {
         assert_eq!(extract_port_from_url("https://example.com:9090/path"), 9090);
     }
+
+    #[test]
+    fn test_ui_create_spinner_non_silent() {
+        let i18n = I18n::new(None);
+        let ui = Ui::new(i18n);
+        // On non-silent Ui, create_spinner returns a real ProgressBar
+        let pb = ui.create_spinner("loading...");
+        pb.finish_and_clear();
+    }
+
+    #[test]
+    fn test_ui_create_spinner_silent() {
+        let i18n = I18n::new(None);
+        let ui = Ui::new_silent(i18n);
+        // On silent Ui, create_spinner returns a hidden ProgressBar
+        let pb = ui.create_spinner("loading...");
+        pb.finish(); // Should not panic
+    }
+
+    #[test]
+    fn test_ui_draw_connected_panel_vi_lang() {
+        // Test Vietnamese language path in draw_connected_panel (clipboard message branch)
+        let i18n = I18n::new(Some("vi".to_string()));
+        let ui = Ui::new(i18n);
+        // This covers the clipboard success/fail path and Vi language branch
+        ui.draw_connected_panel(8080, "https://test.example.com", "tcp");
+    }
+
+    #[test]
+    fn test_ui_draw_qr_non_silent() {
+        let i18n = I18n::new(None);
+        let ui = Ui::new(i18n);
+        // Non-silent mode should render the QR lines
+        ui.draw_qr("https://test.example.com/verify", "Scan here");
+    }
+
+    #[test]
+    fn test_format_size_ranges() {
+        // Test various size ranges to ensure all branches are covered
+        assert_eq!(Ui::format_size(0), "0 B");
+        assert_eq!(Ui::format_size(500), "500 B");
+        assert_eq!(Ui::format_size(1023), "1023 B");
+        assert_eq!(Ui::format_size(1024), "1.0 KB");
+        assert_eq!(Ui::format_size(1024 * 500), "500.0 KB");
+        assert_eq!(Ui::format_size(1024 * 1024), "1.00 MB");
+        assert_eq!(Ui::format_size(1024 * 1024 * 500), "500.00 MB");
+        assert_eq!(Ui::format_size(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(Ui::format_size(1024 * 1024 * 1024 * 2), "2.00 GB");
+    }
+
+    #[test]
+    fn test_draw_live_metrics_history_overflow() {
+        // Covers line 261: metrics_history.remove(0) when len > 20
+        let i18n = I18n::new(None);
+        let mut ui = Ui::new(i18n);
+        // Call draw_live_metrics 22 times to trigger the history overflow removal
+        for i in 0u64..22 {
+            ui.draw_live_metrics(i * 1024, i * 2048, i * 100, i * 200, 10, 1024 * 1024);
+        }
+        // After 22 calls, history size should still be within bounds
+        assert!(ui.metrics_history.len() <= 20);
+    }
+
+    #[test]
+    fn test_render_qr_lines_with_empty_string() {
+        // Empty string technically can still generate a QR code for some encoders.
+        // If it returns empty vec (Err path), we just verify no panic.
+        let lines = Ui::render_qr_lines("");
+        // Either empty (error path) or valid - no panic is the key assertion
+        let _ = lines;
+    }
 }

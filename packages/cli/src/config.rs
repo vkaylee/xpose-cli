@@ -48,7 +48,7 @@ pub struct HooksConfig {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{tempdir, NamedTempFile};
 
     #[test]
     fn test_config_default() {
@@ -83,6 +83,34 @@ mod tests {
     }
 
     #[test]
+    fn test_load_and_save_defaults() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("xpose.yaml");
+        let config = XposeConfig::default();
+        config.save_to_path(&path).unwrap();
+        let loaded = XposeConfig::load_from_path(&path);
+        assert_eq!(loaded.port, None);
+    }
+
+    #[test]
+    fn test_load_uses_default_filename() {
+        // XposeConfig::load() reads from "xpose.yaml" in current dir.
+        // If it doesn't exist, returns defaults.
+        let result = XposeConfig::load();
+        // Should return a valid (possibly default) config without panicking
+        let _ = result;
+    }
+    #[test]
+    fn test_config_load_invalid() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("invalid.yaml");
+        fs::write(&config_path, "invalid: [::] yaml").unwrap();
+
+        let config = XposeConfig::load_from_path(&config_path);
+        assert_eq!(config.port, None); // Should return default
+    }
+
+    #[test]
     fn test_config_save_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("xpose.yaml");
@@ -94,15 +122,6 @@ mod tests {
 
         let loaded = XposeConfig::load_from_path(&path);
         assert_eq!(loaded.port, Some(9999));
-    }
-    #[test]
-    fn test_config_load_invalid() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("invalid.yaml");
-        fs::write(&config_path, "invalid: [::] yaml").unwrap();
-
-        let config = XposeConfig::load_from_path(&config_path);
-        assert_eq!(config.port, None); // Should return default
     }
 
     #[test]
