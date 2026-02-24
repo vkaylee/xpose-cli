@@ -13,6 +13,159 @@ struct Tunnel {
     last_heartbeat: Option<i64>,
     created_at: Option<i64>,
     public_url: Option<String>,
+    dynamic: Option<i64>,
+    cf_tunnel_id: Option<String>,
+}
+
+// ── Cloudflare API client ────────────────────────────────────────────────────
+
+/// Creates a named tunnel in Cloudflare and returns (cf_tunnel_id, token).
+async fn cf_create_tunnel(
+    account_id: &str,
+    api_token: &str,
+    name: &str,
+) -> worker::Result<(String, String)> {
+    let url = format!("https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel");
+    let body = serde_json::json!({ "name": name, "config_src": "cloudflare" });
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_token}"))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
+
+    let req = worker::Request::new_with_init(&url, &init)?;
+    let mut resp = Fetch::Request(req).send().await?;
+    let json: serde_json::Value = resp.json().await?;
+
+    if !json["success"].as_bool().unwrap_or(false) {
+        let err = json["errors"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("unknown error")
+            .to_string();
+        return Err(worker::Error::RustError(format!("CF create tunnel: {err}")));
+    }
+
+    let result = &json["result"];
+    let cf_tunnel_id = result["id"]
+        .as_str()
+        .ok_or_else(|| worker::Error::RustError("Missing tunnel id".into()))?
+        .to_string();
+    let token = result["token"]
+        .as_str()
+        .ok_or_else(|| worker::Error::RustError("Missing tunnel token".into()))?
+        .to_string();
+
+    Ok((cf_tunnel_id, token))
+}
+
+/// Configures the ingress rules for a cloudflared remote-managed tunnel.
+async fn cf_configure_ingress(
+    account_id: &str,
+    api_token: &str,
+    cf_tunnel_id: &str,
+    hostname: &str,
+    port: u16,
+    protocol: &str,
+) -> worker::Result<()> {
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{cf_tunnel_id}/configurations"
+    );
+    let service = format!("{protocol}://localhost:{port}");
+    let body = serde_json::json!({
+        "config": {
+            "ingress": [
+                { "hostname": hostname, "service": service },
+                { "service": "http_status:404" }
+            ]
+        }
+    });
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_token}"))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Put)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
+
+    let req = worker::Request::new_with_init(&url, &init)?;
+    let mut resp = Fetch::Request(req).send().await?;
+    let json: serde_json::Value = resp.json().await?;
+
+    if !json["success"].as_bool().unwrap_or(false) {
+        let err = json["errors"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("unknown error")
+            .to_string();
+        return Err(worker::Error::RustError(format!(
+            "CF configure ingress: {err}"
+        )));
+    }
+    Ok(())
+}
+
+/// Creates a DNS route (CNAME) for the tunnel.
+async fn cf_route_dns(
+    account_id: &str,
+    api_token: &str,
+    cf_tunnel_id: &str,
+    hostname: &str,
+) -> worker::Result<()> {
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{cf_tunnel_id}/routes"
+    );
+    let body = serde_json::json!({ "type": "dns", "user_hostname": hostname });
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_token}"))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
+
+    let req = worker::Request::new_with_init(&url, &init)?;
+    let mut resp = Fetch::Request(req).send().await?;
+    let json: serde_json::Value = resp.json().await?;
+
+    if !json["success"].as_bool().unwrap_or(false) {
+        let err = json["errors"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("unknown error")
+            .to_string();
+        return Err(worker::Error::RustError(format!("CF route DNS: {err}")));
+    }
+    Ok(())
+}
+
+/// Deletes a tunnel from Cloudflare.
+async fn cf_delete_tunnel(
+    account_id: &str,
+    api_token: &str,
+    cf_tunnel_id: &str,
+) -> worker::Result<()> {
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{cf_tunnel_id}"
+    );
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_token}"))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Delete).with_headers(headers);
+
+    let req = worker::Request::new_with_init(&url, &init)?;
+    Fetch::Request(req).send().await?;
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -501,7 +654,95 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                 json_error("Collision, please retry", 409)
             }
         }
-        None => json_error("No tunnels available", 503),
+        None => {
+            // No pool tunnel available — try dynamic provisioning via Cloudflare API
+            let api_token = ctx.env.var("CF_API_TOKEN").map(|v| v.to_string()).ok();
+            let account_id = ctx.env.var("CF_ACCOUNT_ID").map(|v| v.to_string()).ok();
+            let tunnel_domain = ctx.env.var("CF_TUNNEL_DOMAIN").map(|v| v.to_string()).ok();
+
+            match (api_token, account_id, tunnel_domain) {
+                (Some(api_token), Some(account_id), Some(tunnel_domain)) => {
+                    let port = body.port.unwrap_or(80);
+                    let protocol = body.protocol.unwrap_or_else(|| "tcp".to_string());
+                    let short_id = uuid::Uuid::new_v4()
+                        .to_string()
+                        .chars()
+                        .take(8)
+                        .collect::<String>();
+                    let tunnel_name = format!("xpose-{short_id}");
+                    let hostname = format!("{short_id}.{tunnel_domain}");
+                    let public_url = format!("tcp://{hostname}");
+
+                    // Create tunnel
+                    let (cf_tunnel_id, token) =
+                        match cf_create_tunnel(&account_id, &api_token, &tunnel_name).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                console_log!("[Dynamic] Create tunnel failed: {}", e);
+                                return json_error(format!("Failed to create tunnel: {e}"), 503);
+                            }
+                        };
+
+                    // Configure ingress rules
+                    if let Err(e) = cf_configure_ingress(
+                        &account_id,
+                        &api_token,
+                        &cf_tunnel_id,
+                        &hostname,
+                        port,
+                        &protocol,
+                    )
+                    .await
+                    {
+                        console_log!("[Dynamic] Configure ingress failed: {}", e);
+                        let _ = cf_delete_tunnel(&account_id, &api_token, &cf_tunnel_id).await;
+                        return json_error(format!("Failed to configure tunnel: {e}"), 503);
+                    }
+
+                    // Route DNS
+                    if let Err(e) =
+                        cf_route_dns(&account_id, &api_token, &cf_tunnel_id, &hostname).await
+                    {
+                        console_log!("[Dynamic] Route DNS failed: {}", e);
+                        let _ = cf_delete_tunnel(&account_id, &api_token, &cf_tunnel_id).await;
+                        return json_error(format!("Failed to route DNS: {e}"), 503);
+                    }
+
+                    // Persist to DB
+                    let tunnel_id = uuid::Uuid::new_v4().to_string();
+                    let res = db
+                        .prepare("INSERT INTO tunnels (id, name, token, status, device_id, port, protocol, last_heartbeat, created_at, public_url, dynamic, cf_tunnel_id) VALUES (?, ?, ?, 'BUSY', ?, ?, ?, ?, ?, ?, 1, ?)")
+                        .bind(&[
+                            tunnel_id.clone().into(),
+                            tunnel_name.clone().into(),
+                            token.clone().into(),
+                            body.device_id.into(),
+                            port.into(),
+                            protocol.into(),
+                            now.into(),
+                            now.into(),
+                            public_url.clone().into(),
+                            cf_tunnel_id.into(),
+                        ])?
+                        .run()
+                        .await;
+
+                    match res {
+                        Ok(_) => Response::from_json(&serde_json::json!({
+                            "success": true,
+                            "tunnel": {
+                                "id": tunnel_id,
+                                "name": tunnel_name,
+                                "token": token,
+                                "public_url": public_url
+                            }
+                        })),
+                        Err(e) => json_error(format!("DB error: {e}"), 500),
+                    }
+                }
+                _ => json_error("No tunnels available", 503),
+            }
+        }
     }
 }
 
@@ -535,10 +776,40 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     let body: DeviceRequest = req.json().await?;
     let db = ctx.env.d1("DB")?;
 
-    db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE device_id = ? AND status = 'BUSY'")
-        .bind(&[body.device_id.into()])?
-        .run()
-        .await?;
+    // Look up the tunnel before releasing to check if it was dynamic
+    let tunnel: Option<Tunnel> = db
+        .prepare("SELECT * FROM tunnels WHERE device_id = ? AND status = 'BUSY'")
+        .bind(&[body.device_id.clone().into()])?
+        .first::<Tunnel>(None)
+        .await
+        .unwrap_or(None);
+
+    if let Some(ref t) = tunnel {
+        if t.dynamic.unwrap_or(0) == 1 {
+            // Delete the dynamic tunnel from DB entirely
+            db.prepare("DELETE FROM tunnels WHERE id = ?")
+                .bind(&[t.id.clone().into()])?
+                .run()
+                .await?;
+
+            // Clean up from Cloudflare API asynchronously (best-effort)
+            let api_token = ctx.env.var("CF_API_TOKEN").map(|v| v.to_string()).ok();
+            let account_id = ctx.env.var("CF_ACCOUNT_ID").map(|v| v.to_string()).ok();
+            if let (Some(api_token), Some(account_id), Some(cf_tunnel_id)) =
+                (api_token, account_id, t.cf_tunnel_id.clone())
+            {
+                if let Err(e) = cf_delete_tunnel(&account_id, &api_token, &cf_tunnel_id).await {
+                    console_log!("[Release] CF delete tunnel failed (non-fatal): {}", e);
+                }
+            }
+        } else {
+            // Static pool tunnel: mark as available
+            db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE id = ?")
+                .bind(&[t.id.clone().into()])?
+                .run()
+                .await?;
+        }
+    }
 
     Response::from_json(&serde_json::json!({"success": true}))
 }
@@ -635,6 +906,8 @@ mod tests {
             last_heartbeat: None,
             created_at: None,
             public_url: None,
+            dynamic: None,
+            cf_tunnel_id: None,
         };
         let json = serde_json::to_string(&tunnel).unwrap();
         assert!(json.contains("\"id\":\"t1\""));

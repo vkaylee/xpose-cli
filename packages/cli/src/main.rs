@@ -356,17 +356,20 @@ async fn run_tunnel(
     };
 
     // Determine the public URL.
-    // Priority: (1) server-provided public_url, (2) auto-detected from cloudflared
-    // stderr logs, (3) constructed fallback.
-    let server_url_hint = tunnel_info.public_url.clone();
-    let fallback_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
-
-    // Read cloudflared stderr to auto-detect the hostname Cloudflare assigns.
-    // We wait up to 5 s; if nothing useful arrives we show the fallback.
-    let detected_url: Option<String> = if server_url_hint.is_none() {
+    // Priority: (1) server-provided public_url (dynamic tunnels always have this),
+    //           (2) auto-detected from cloudflared stderr (legacy quick tunnels),
+    //           (3) constructed fallback.
+    let tunnel_public_url = tunnel_info.public_url.clone();
+    let public_url = if let Some(url) = tunnel_public_url {
+        // Server always provides the URL for dynamic tunnels — use it directly.
+        sleep(Duration::from_millis(1500)).await;
+        url
+    } else {
+        // Legacy: no server URL — attempt to read it from cloudflared stderr.
+        // This covers quick-tunnel mode (trycloudflare.com) where Cloudflare
+        // assigns a random hostname and logs it as plain text.
+        let fallback_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
         if let Some(stderr) = child.stderr.take() {
-            // Read from the blocking pipe on a dedicated blocking thread so we
-            // don't stall the async executor.
             let parse_task = tokio::task::spawn_blocking(move || {
                 use std::io::{BufRead, BufReader};
                 let reader = BufReader::new(stderr);
@@ -377,21 +380,15 @@ async fn run_tunnel(
                 }
                 None
             });
-            // Give cloudflared 5 seconds to announce its hostname, then give up.
             match tokio::time::timeout(Duration::from_secs(5), parse_task).await {
-                Ok(Ok(found)) => found,
-                _ => None,
+                Ok(Ok(Some(detected))) => detected,
+                _ => fallback_url,
             }
         } else {
             sleep(Duration::from_millis(1500)).await;
-            None
+            fallback_url
         }
-    } else {
-        sleep(Duration::from_millis(1500)).await;
-        None
     };
-
-    let public_url = server_url_hint.or(detected_url).unwrap_or(fallback_url);
 
     {
         let ui_lock = ui.lock().expect("Failed to lock UI");
