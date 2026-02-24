@@ -56,8 +56,8 @@ struct DeviceRequest {
     device_id: String,
 }
 
-pub const MIN_CLI_VERSION: &str = "0.4.11";
-pub const RECOMMENDED_VERSION: &str = "0.4.11";
+pub const MIN_CLI_VERSION: &str = "0.4.14";
+pub const RECOMMENDED_VERSION: &str = "0.4.14";
 
 pub const RUNNING_MESSAGE: &str = "Cloudflare Tunnel CLI Key Server (Rust 🦀) is running.";
 
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(MIN_CLI_VERSION, "0.4.11");
+        assert_eq!(MIN_CLI_VERSION, "0.4.14");
         assert!(RUNNING_MESSAGE.contains("Key Server"));
     }
 
