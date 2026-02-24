@@ -12,6 +12,7 @@ struct Tunnel {
     protocol: Option<String>,
     last_heartbeat: Option<i64>,
     created_at: Option<i64>,
+    public_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,6 +41,7 @@ struct AddTunnelRequest {
     id: String,
     name: String,
     token: String,
+    public_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -229,8 +231,13 @@ async fn handle_admin_tunnels(mut req: Request, ctx: RouteContext<()>) -> Result
 
     let db = ctx.env.d1("DB")?;
     let result = db
-        .prepare("INSERT INTO tunnels (id, name, token, status) VALUES (?, ?, ?, 'AVAILABLE')")
-        .bind(&[body.id.into(), body.name.into(), body.token.into()])?
+        .prepare("INSERT INTO tunnels (id, name, token, status, public_url) VALUES (?, ?, ?, 'AVAILABLE', ?)")
+        .bind(&[
+            body.id.into(),
+            body.name.into(),
+            body.token.into(),
+            body.public_url.into(),
+        ])?
         .run()
         .await;
 
@@ -452,7 +459,7 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         return Response::from_json(&serde_json::json!({
             "success": true,
             "message": "Reconnected",
-            "tunnel": { "id": t.id, "name": t.name, "token": t.token }
+            "tunnel": { "id": t.id, "name": t.name, "token": t.token, "public_url": t.public_url }
         }));
     }
 
@@ -488,7 +495,7 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
             if changes > 0 {
                 Response::from_json(&serde_json::json!({
                     "success": true,
-                    "tunnel": { "id": t.id, "name": t.name, "token": t.token }
+                    "tunnel": { "id": t.id, "name": t.name, "token": t.token, "public_url": t.public_url }
                 }))
             } else {
                 json_error("Collision, please retry", 409)
@@ -627,6 +634,7 @@ mod tests {
             protocol: None,
             last_heartbeat: None,
             created_at: None,
+            public_url: None,
         };
         let json = serde_json::to_string(&tunnel).unwrap();
         assert!(json.contains("\"id\":\"t1\""));

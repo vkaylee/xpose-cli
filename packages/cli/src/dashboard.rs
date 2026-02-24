@@ -544,6 +544,8 @@ mod tests {
     #[test]
     fn test_dashboard_empty_state() {
         let mut app = DashboardApp::new("http://localhost".to_string(), I18n::new(None));
+        app.tunnels.clear();
+        app.table_state.select(None);
         app.next();
         assert_eq!(app.table_state.selected(), None);
         app.previous();

@@ -35,6 +35,7 @@ pub struct TunnelInfo {
     pub id: String,
     pub name: String,
     pub token: String,
+    pub public_url: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -283,7 +284,7 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
-                r#"{"success": true, "tunnel": {"id": "t1", "name": "n1", "token": "tok1"}}"#,
+                r#"{"success": true, "tunnel": {"id": "t1", "name": "n1", "token": "tok1", "public_url": "https://pub.url"}}"#,
             )
             .create_async()
             .await;
@@ -296,6 +297,7 @@ mod tests {
 
         assert_eq!(info.id, "t1");
         assert_eq!(info.name, "n1");
+        assert_eq!(info.public_url, Some("https://pub.url".to_string()));
         mock.assert_async().await;
     }
 
