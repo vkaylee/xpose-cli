@@ -369,4 +369,127 @@ mod tests {
         let res = get_release_name("unknown-os", "unknown-arch");
         assert!(res.is_err());
     }
+
+    // ── parse_hostname_from_log_line ─────────────────────────────────────────
+
+    /// Named tunnel: cloudflared logs the configured ingress hostname.
+    #[test]
+    fn test_parse_hostname_field() {
+        let line = r#"{"level":"info","hostname":"abc123.trycloudflare.com","message":"Registered tunnel connection"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://abc123.trycloudflare.com".to_string())
+        );
+    }
+
+    /// "host" field used in some routing log variants.
+    #[test]
+    fn test_parse_host_field() {
+        let line = r#"{"level":"info","host":"my-app.example.com","message":"Route propagating"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://my-app.example.com".to_string())
+        );
+    }
+
+    /// "url" field emitted for quick-tunnel confirmation lines, with https:// prefix.
+    #[test]
+    fn test_parse_url_field_with_scheme() {
+        let line =
+            r#"{"level":"info","url":"https://quick-xyz.trycloudflare.com","message":"Connected"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://quick-xyz.trycloudflare.com".to_string())
+        );
+    }
+
+    /// "url" field with plain http:// prefix — normalised to https://.
+    #[test]
+    fn test_parse_url_field_http_prefix_normalised() {
+        let line = r#"{"level":"info","url":"http://internal.example.com","message":"x"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://internal.example.com".to_string())
+        );
+    }
+
+    /// Custom domain with multiple subdomains.
+    #[test]
+    fn test_parse_custom_subdomain() {
+        let line = r#"{"level":"info","hostname":"tunnel.staging.mycompany.io","message":"ok"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://tunnel.staging.mycompany.io".to_string())
+        );
+    }
+
+    /// localhost values must be ignored — they are internal cloudflared addresses.
+    #[test]
+    fn test_rejects_localhost() {
+        let line = r#"{"level":"info","hostname":"localhost:2000","message":"local"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// 127.x.x.x loopback addresses must be ignored.
+    #[test]
+    fn test_rejects_loopback_ip() {
+        let line = r#"{"level":"info","url":"127.0.0.1:8080","message":"loop"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// Lines without a dot (bare hostnames / single words) should be ignored.
+    #[test]
+    fn test_rejects_no_dot() {
+        let line = r#"{"level":"info","hostname":"nodomain","message":"x"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// Empty hostname field should yield None.
+    #[test]
+    fn test_rejects_empty_hostname() {
+        let line = r#"{"level":"info","hostname":"","message":"x"}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// Non-JSON lines (plain text logs) should yield None without panicking.
+    #[test]
+    fn test_non_json_line_returns_none() {
+        assert_eq!(
+            parse_hostname_from_log_line("INF Starting tunnel name=test-tunnel"),
+            None
+        );
+    }
+
+    /// Completely empty string should yield None.
+    #[test]
+    fn test_empty_line_returns_none() {
+        assert_eq!(parse_hostname_from_log_line(""), None);
+    }
+
+    /// JSON without any of the expected keys should yield None.
+    #[test]
+    fn test_json_without_hostname_keys() {
+        let line = r#"{"level":"info","message":"Connection registered","connIndex":0}"#;
+        assert_eq!(parse_hostname_from_log_line(line), None);
+    }
+
+    /// Priority: "hostname" is checked before "host" and "url".
+    #[test]
+    fn test_hostname_field_takes_priority() {
+        let line = r#"{"level":"info","hostname":"preferred.example.com","host":"secondary.example.com","url":"https://other.example.com","message":"x"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://preferred.example.com".to_string())
+        );
+    }
+
+    /// Whitespace-padded values should be trimmed and accepted.
+    #[test]
+    fn test_hostname_with_whitespace_trimmed() {
+        let line = r#"{"level":"info","hostname":"  spaced.example.com  ","message":"x"}"#;
+        assert_eq!(
+            parse_hostname_from_log_line(line),
+            Some("https://spaced.example.com".to_string())
+        );
+    }
 }

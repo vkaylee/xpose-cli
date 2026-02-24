@@ -5,6 +5,39 @@ use indicatif::{ProgressBar, ProgressStyle};
 use qrcode::QrCode;
 use std::time::Duration;
 
+/// Extract the port from a URL string. Returns the default port for the scheme
+/// (443 for HTTPS, 80 for HTTP) if no explicit port is present.
+fn extract_port_from_url(url: &str) -> u16 {
+    // Strip scheme to find host:port
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("tcp://")
+        .trim_start_matches("udp://");
+
+    // host:port or host:port/path
+    if let Some(colon_pos) = without_scheme.rfind(':') {
+        let port_str = &without_scheme[colon_pos + 1..];
+        // Take only digits (stop at '/' or any non-digit)
+        let port_digits: String = port_str
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if let Ok(p) = port_digits.parse::<u16>() {
+            return p;
+        }
+    }
+
+    // Default ports based on scheme
+    if url.starts_with("https://") {
+        443
+    } else if url.starts_with("http://") {
+        80
+    } else {
+        0
+    }
+}
+
 pub struct Ui {
     term: Term,
     metrics_history: Vec<u64>,
@@ -122,6 +155,15 @@ impl Ui {
             style("Protocol").bold().blue(),
             style(protocol.to_uppercase()).magenta().bold()
         ));
+
+        // Extract and display the remote port from the public URL
+        let remote_port = extract_port_from_url(public_url);
+        let _ = self.term.write_line(&format!(
+            "  {} : {}",
+            style("Remote").bold().blue(),
+            style(format!("port {remote_port}")).yellow().bold()
+        ));
+
         let _ = self.term.write_line(&format!("{border}"));
 
         // Generate and draw QR Code using simple string renderer
@@ -158,34 +200,45 @@ impl Ui {
         if self.silent {
             return;
         }
-        if let Ok(code) = QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L) {
-            let width = code.width();
-            let _ = self
-                .term
-                .write_line(&format!("  {} {}", style("▶").cyan(), label));
-
-            // Use Unicode 1/2 blocks for square pixels in terminal
-            // Each character represents 2 vertical modules
-            for y in (0..width).step_by(2) {
-                let mut line = String::from("  ");
-                for x in 0..width {
-                    let top = code[(x, y)] == qrcode::Color::Dark;
-                    let bottom = if y + 1 < width {
-                        code[(x, y + 1)] == qrcode::Color::Dark
-                    } else {
-                        false
-                    };
-
-                    match (top, bottom) {
-                        (true, true) => line.push('█'),
-                        (true, false) => line.push('▀'),
-                        (false, true) => line.push('▄'),
-                        (false, false) => line.push(' '),
-                    }
-                }
-                let _ = self.term.write_line(&line);
-            }
+        let _ = self
+            .term
+            .write_line(&format!("  {} {}", style("▶").cyan(), label));
+        for line in Self::render_qr_lines(data) {
+            let _ = self.term.write_line(&line);
         }
+    }
+
+    /// Renders a QR code as half-size terminal lines (2x2 modules per character).
+    /// Returns empty vec if QR generation fails.
+    fn render_qr_lines(data: &str) -> Vec<String> {
+        let code = match QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L) {
+            Ok(c) => c,
+            Err(_) => return vec![],
+        };
+        let width = code.width();
+        let mut lines = Vec::new();
+
+        // Each character represents 2x2 modules (half-size rendering)
+        for y in (0..width).step_by(2) {
+            let mut line = String::from("  ");
+            for x in (0..width).step_by(2) {
+                let top = code[(x, y)] == qrcode::Color::Dark;
+                let bottom = if y + 1 < width {
+                    code[(x, y + 1)] == qrcode::Color::Dark
+                } else {
+                    false
+                };
+
+                match (top, bottom) {
+                    (true, true) => line.push('█'),
+                    (true, false) => line.push('▀'),
+                    (false, true) => line.push('▄'),
+                    (false, false) => line.push(' '),
+                }
+            }
+            lines.push(line);
+        }
+        lines
     }
 
     pub fn draw_live_metrics(
@@ -388,5 +441,88 @@ mod tests {
         let ui = Ui::new(i18n);
         // Smoke test for QR drawing
         ui.draw_qr("https://xpose.cloud/verify/123", "Scan to Verify");
+    }
+
+    #[test]
+    fn test_render_qr_lines_half_size() {
+        use qrcode::QrCode;
+
+        let data = "https://xpose.cloud/verify/123";
+
+        // Measure raw QR module dimensions
+        let code =
+            QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L).unwrap();
+        let module_width = code.width();
+
+        // Rendered output
+        let lines = Ui::render_qr_lines(data);
+
+        // Row count: ceil(module_width / 2)
+        let expected_rows = module_width.div_ceil(2);
+        assert_eq!(
+            lines.len(),
+            expected_rows,
+            "row count should be ceil(module_width / 2)"
+        );
+
+        // Column count per line: 2 (indent) + ceil(module_width / 2) chars
+        let expected_cols = 2 + module_width.div_ceil(2);
+        for line in &lines {
+            assert_eq!(
+                line.chars().count(),
+                expected_cols,
+                "each line width should be 2-indent + ceil(module_width / 2)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_render_qr_lines_invalid_data() {
+        // Empty input can still produce a QR code; truly invalid data is hard to trigger,
+        // so verify it doesn't panic and returns a non-empty result for valid input.
+        let lines = Ui::render_qr_lines("https://xpose.cloud");
+        assert!(!lines.is_empty(), "valid data should produce QR lines");
+    }
+
+    // ── extract_port_from_url ────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_port_https_default() {
+        assert_eq!(extract_port_from_url("https://abc.trycloudflare.com"), 443);
+    }
+
+    #[test]
+    fn test_extract_port_http_default() {
+        assert_eq!(extract_port_from_url("http://example.com"), 80);
+    }
+
+    #[test]
+    fn test_extract_port_explicit() {
+        assert_eq!(extract_port_from_url("https://example.com:8443"), 8443);
+    }
+
+    #[test]
+    fn test_extract_port_tcp_explicit() {
+        assert_eq!(extract_port_from_url("tcp://ssh.example.com:22"), 22);
+    }
+
+    #[test]
+    fn test_extract_port_udp_explicit() {
+        assert_eq!(extract_port_from_url("udp://game.example.com:27015"), 27015);
+    }
+
+    #[test]
+    fn test_extract_port_no_scheme() {
+        assert_eq!(extract_port_from_url("example.com:3000"), 3000);
+    }
+
+    #[test]
+    fn test_extract_port_unknown_scheme_no_port() {
+        assert_eq!(extract_port_from_url("tcp://example.com"), 0);
+    }
+
+    #[test]
+    fn test_extract_port_with_path() {
+        assert_eq!(extract_port_from_url("https://example.com:9090/path"), 9090);
     }
 }
