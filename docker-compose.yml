@@ -29,42 +29,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Local development: Key Server (wrangler dev --local)
-  # Usage: docker compose up key-server-dev
-  key-server-dev:
-    build:
-      context: .
-      target: dev
-    volumes:
-      - .:/workspace
-      - cargo-registry:/usr/local/cargo/registry
-      - cargo-git:/usr/local/cargo/git
-    tmpfs:
-      - /workspace/.sccache:size=512m,mode=1777
-      - /tmp:size=1g,mode=1777
-    working_dir: /workspace/packages/key-server
-    command: >
-      bash -c "
-        echo '🔨 Building key-server worker...' &&
-        worker-build --release &&
-        echo '🚀 Starting wrangler dev on port 8787...' &&
-        wrangler dev --config wrangler.jsonc --local --persist --d1 DB --port 8787 --non-interactive --ip 0.0.0.0
-      "
-    ports:
-      - "8787:8787"
-    environment:
-      - CARGO_HOME=/usr/local/cargo
-      - RUSTC_WRAPPER=sccache
-      - SCCACHE_DIR=/workspace/.sccache
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8787/api/config"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-      start_period: 120s
-    mem_limit: 4g
-    shm_size: 1gb
-
 volumes:
   cargo-registry:
   cargo-git:
