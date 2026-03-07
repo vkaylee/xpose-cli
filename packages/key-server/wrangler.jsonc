@@ -27,5 +27,21 @@
 	},
 	"observability": {
 		"enabled": true
+	},
+	"env": {
+		"staging": {
+			"name": "key-server-staging",
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "tunnel-db-staging",
+					"database_id": "__STAGING_D1_ID__",
+					"migrations_dir": "./migrations"
+				}
+			],
+			"vars": {
+				"ADMIN_SECRET": "staging-secret-token"
+			}
+		}
 	}
 }
