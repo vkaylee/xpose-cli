@@ -107,7 +107,7 @@ impl Ui {
             .write_line(&format!("{} {}", style("i").cyan().bold(), msg));
     }
 
-    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str) {
+    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str, access_token: Option<&str>) {
         if self.silent {
             return;
         }
@@ -158,16 +158,37 @@ impl Ui {
 
         // Extract and display the remote port from the public URL
         let remote_port = extract_port_from_url(public_url);
+        let remote_display = if remote_port == 0 {
+            "Cloudflare Edge".to_string()
+        } else {
+            format!("port {remote_port}")
+        };
         let _ = self.term.write_line(&format!(
             "  {} : {}",
             style("Remote").bold().blue(),
-            style(format!("port {remote_port}")).yellow().bold()
+            style(remote_display).yellow().bold()
         ));
 
         let _ = self.term.write_line(&format!("{border}"));
 
-        // Generate and draw QR Code using simple string renderer
-        self.draw_qr(public_url, "QR Code:");
+        // Show client connection instructions
+        let hostname = public_url
+            .trim_start_matches("tcp://")
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let connect_cmd = if let Some(token) = access_token {
+            format!("xpose connect {hostname} --token {token}")
+        } else {
+            format!("xpose connect {hostname}")
+        };
+        let _ = self.term.write_line(&format!(
+            "\n  {} {}",
+            style("📋 Client:").yellow().bold(),
+            style(&connect_cmd).cyan()
+        ));
+
+        // QR encodes the connect command for easy copy
+        self.draw_qr(&connect_cmd, "QR Code:");
 
         let _ = self.term.write_line(&format!(
             "\n  {} {}\n",
@@ -208,8 +229,8 @@ impl Ui {
         }
     }
 
-    /// Renders a QR code as half-size terminal lines (2x2 modules per character).
-    /// Returns empty vec if QR generation fails.
+    /// Renders a QR code as half-height terminal lines (1 char = 1 column × 2 rows).
+    /// Uses half-block chars (▀▄█) so the QR appears square in terminal.
     fn render_qr_lines(data: &str) -> Vec<String> {
         let code = match QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L) {
             Ok(c) => c,
@@ -218,10 +239,10 @@ impl Ui {
         let width = code.width();
         let mut lines = Vec::new();
 
-        // Each character represents 2x2 modules (half-size rendering)
+        // y steps by 2 (half-block), x steps by 1 (full width for square aspect)
         for y in (0..width).step_by(2) {
             let mut line = String::from("  ");
-            for x in (0..width).step_by(2) {
+            for x in 0..width {
                 let top = code[(x, y)] == qrcode::Color::Dark;
                 let bottom = if y + 1 < width {
                     code[(x, y + 1)] == qrcode::Color::Dark
@@ -249,6 +270,7 @@ impl Ui {
         tx_speed: u64,
         ping_ms: u64,
         ram_bytes: u64,
+        connections: u64,
     ) {
         if self.silent {
             return;
@@ -268,8 +290,15 @@ impl Ui {
         let tx_formatted = Self::format_size(tx_speed);
         let ram_formatted = Self::format_size(ram_bytes);
 
+        let conn_status = if connections > 0 {
+            format!("{} {} conn", style("🔗").green(), style(connections).green().bold())
+        } else {
+            format!("{}", style("⏳ Waiting...").yellow().dim())
+        };
+
         let live_line = format!(
-            "{} [{}] | {} {}/s | {} {}/s | {} {} | {} {}ms | {} {}",
+            "{} | {} [{}] | {} {}/s | {} {}/s | {} {} | {} {}ms | {} {}",
+            conn_status,
             style("Flow:").dim(),
             style(sparkline).cyan(),
             style("↓ Rx:").cyan(),
@@ -378,8 +407,8 @@ mod tests {
         ui.info("testing info");
         ui.draw_auth_panel();
         ui.draw_qr_auth("http://example.com");
-        ui.draw_connected_panel(3000, "https://public.url", "tcp");
-        ui.draw_live_metrics(100, 200, 10, 20, 15, 50 * 1024 * 1024);
+        ui.draw_connected_panel(3000, "https://public.url", "tcp", None);
+        ui.draw_live_metrics(100, 200, 10, 20, 15, 50 * 1024 * 1024, 0);
     }
 
     #[test]
@@ -396,10 +425,10 @@ mod tests {
         let ui = Ui::new_silent(i18n.clone());
 
         ui.draw_auth_panel();
-        ui.draw_connected_panel(8080, "https://test.xpose.dev", "tcp");
+        ui.draw_connected_panel(8080, "https://test.xpose.dev", "tcp", None);
 
         let mut ui_mut = Ui::new_silent(i18n.clone());
-        ui_mut.draw_live_metrics(1000, 2000, 100, 200, 10, 1024 * 1024);
+        ui_mut.draw_live_metrics(1000, 2000, 100, 200, 10, 1024 * 1024, 2);
     }
 
     #[test]
@@ -421,7 +450,7 @@ mod tests {
         ui.success("test");
         ui.error("test");
         ui.info("test");
-        ui.draw_connected_panel(80, "http://test", "tcp");
+        ui.draw_connected_panel(80, "http://test", "tcp", None);
         ui.draw_auth_panel();
     }
 
@@ -430,9 +459,9 @@ mod tests {
         let i18n = I18n::new(None);
         let mut ui = Ui::new(i18n);
         // Smoke test to ensure it doesn't panic with various values
-        ui.draw_live_metrics(1024, 2048, 100, 200, 50, 1024 * 1024);
-        ui.draw_live_metrics(0, 0, 0, 0, 0, 0);
-        ui.draw_live_metrics(1_000_000, 2_000_000, 500_000, 500_000, 10, 100_000_000);
+        ui.draw_live_metrics(1024, 2048, 100, 200, 50, 1024 * 1024, 0);
+        ui.draw_live_metrics(0, 0, 0, 0, 0, 0, 0);
+        ui.draw_live_metrics(1_000_000, 2_000_000, 500_000, 500_000, 10, 100_000_000, 5);
     }
 
     #[test]
@@ -465,13 +494,13 @@ mod tests {
             "row count should be ceil(module_width / 2)"
         );
 
-        // Column count per line: 2 (indent) + ceil(module_width / 2) chars
-        let expected_cols = 2 + module_width.div_ceil(2);
+        // Column count per line: 2 (indent) + module_width chars (x steps by 1 now)
+        let expected_cols = 2 + module_width;
         for line in &lines {
             assert_eq!(
                 line.chars().count(),
                 expected_cols,
-                "each line width should be 2-indent + ceil(module_width / 2)"
+                "each line width should be 2-indent + module_width"
             );
         }
     }
@@ -550,7 +579,7 @@ mod tests {
         let i18n = I18n::new(Some("vi".to_string()));
         let ui = Ui::new(i18n);
         // This covers the clipboard success/fail path and Vi language branch
-        ui.draw_connected_panel(8080, "https://test.example.com", "tcp");
+        ui.draw_connected_panel(8080, "https://test.example.com", "tcp", None);
     }
 
     #[test]
@@ -582,7 +611,7 @@ mod tests {
         let mut ui = Ui::new(i18n);
         // Call draw_live_metrics 22 times to trigger the history overflow removal
         for i in 0u64..22 {
-            ui.draw_live_metrics(i * 1024, i * 2048, i * 100, i * 200, 10, 1024 * 1024);
+            ui.draw_live_metrics(i * 1024, i * 2048, i * 100, i * 200, 10, 1024 * 1024, 1);
         }
         // After 22 calls, history size should still be within bounds
         assert!(ui.metrics_history.len() <= 20);

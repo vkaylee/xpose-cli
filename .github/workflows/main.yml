@@ -171,6 +171,15 @@ jobs:
           sed -i '/"build": {/,/},/d' wrangler.jsonc
           npx wrangler d1 migrations apply tunnel-db --remote
           npx wrangler deploy
+      - name: Configure Tunnel Provisioning Secrets
+        working-directory: packages/key-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_WORKER_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "${{ secrets.CLOUDFLARE_API_TUNNEL_TOKEN }}" | npx wrangler secret put CLOUDFLARE_API_TUNNEL_TOKEN
+          echo "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" | npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+          echo "${{ secrets.CLOUDFLARE_TUNNEL_DOMAIN }}" | npx wrangler secret put CLOUDFLARE_TUNNEL_DOMAIN
 
   publish_release:
     name: 🚢 Publish Release

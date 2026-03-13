@@ -47,7 +47,7 @@ RUN dpkg --add-architecture arm64 \
 # --- Stage 4: Dev ---
 FROM base AS dev
 ENV RUSTC_WRAPPER=sccache
-ENV SCCACHE_DIR=/workspace/.sccache
+ENV SCCACHE_DIR=/tmp/sccache
 COPY --from=cacher /workspace/target /workspace/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 COPY --from=planner /workspace/recipe.json recipe.json

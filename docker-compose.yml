@@ -7,12 +7,15 @@ services:
       - .:/workspace
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+      - key-server-build:/workspace/packages/key-server/build
+      - xpose-bin:/root/.xpose/bin
     tmpfs:
-      - /workspace/.sccache:size=512m,mode=1777
+      - /tmp/sccache:size=512m,mode=1777
       - /tmp:size=1g,mode=1777
     environment:
       - MT_TUNNEL_PORT=3000
-      - SCCACHE_DIR=/workspace/.sccache
+      - SCCACHE_DIR=/tmp/sccache
       - RUSTC_WRAPPER=sccache
       - CARGO_HOME=/usr/local/cargo
       - CLOUDFLARE_API_TOKEN # Required by wrangler internally (mapped from WORKER_TOKEN in CI)
@@ -39,8 +42,11 @@ services:
       - .:/workspace
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+      - key-server-build:/workspace/packages/key-server/build
+      - xpose-bin:/root/.xpose/bin
     tmpfs:
-      - /workspace/.sccache:size=512m,mode=1777
+      - /tmp/sccache:size=512m,mode=1777
       - /tmp:size=1g,mode=1777
     working_dir: /workspace/packages/key-server
     command: >
@@ -55,7 +61,7 @@ services:
     environment:
       - CARGO_HOME=/usr/local/cargo
       - RUSTC_WRAPPER=sccache
-      - SCCACHE_DIR=/workspace/.sccache
+      - SCCACHE_DIR=/tmp/sccache
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8787/api/config"]
       interval: 10s
@@ -68,3 +74,6 @@ services:
 volumes:
   cargo-registry:
   cargo-git:
+  target-cache:
+  key-server-build:
+  xpose-bin:

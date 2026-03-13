@@ -22,13 +22,13 @@ We welcome ideas for new features! Please open an issue to discuss your proposal
 
 ## Development Setup
 
-**CRITICAL**: All development, testing, and building must be performed inside the Docker environment to ensure platform parity and zero-defect deployments.
+**CRITICAL**: All development, testing, and building must be performed inside the container environment (Podman/Docker) to ensure platform parity and zero-defect deployments.
 
-### 🐳 The Docker Utility
-We use `./run-in-docker.sh` as the primary entry point for all quality checks. See [docs/DOCKER.md](docs/DOCKER.md) for detailed technical info on our caching architecture.
-- **Linting**: `./run-in-docker.sh lint` (Format & Clippy).
-- **Testing**: `./run-in-docker.sh test` (Workspace tests).
-- **Verify All**: `./run-in-docker.sh all` (Runs both).
+### 🐳 Container Utility
+We use `./run-in-container.sh` as the primary entry point for all quality checks. See [docs/CONTAINERS.md](docs/CONTAINERS.md) for detailed technical info on our caching architecture.
+- **Linting**: `./run-in-container.sh lint` (Format & Clippy).
+- **Testing**: `./run-in-container.sh test` (Workspace tests).
+- **Verify All**: `./run-in-container.sh all` (Runs both).
 
 ### 🛡️ Quality Gates
 - **Pre-commit**: A Git hook is installed to automatically run `lint` before every commit.
@@ -36,7 +36,7 @@ We use `./run-in-docker.sh` as the primary entry point for all quality checks. S
 - **Caching**: The system uses persistent volumes and `sccache` for near-instant incremental builds. Use `export TARGET_DIR=./target` if you want to share artifacts with the host (Linux only).
 
 ### Coding Standards
-- Always use the `./run-in-docker.sh` tool before claiming a task is done.
+- Always use the `./run-in-container.sh` tool before claiming a task is done.
 - Follow the "Protocol-First" approach documented in `.ai-context-os/PROJECT_OS.md`.
 - Ensure all tests pass 100% before requesting a review.
 

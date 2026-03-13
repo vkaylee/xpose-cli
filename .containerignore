@@ -1,0 +1,15 @@
+# Container Build Exclusions
+**/target
+**/node_modules
+.git
+.github
+.wrangler
+.sccache
+*.md
+LICENSE*
+Dockerfile
+Containerfile
+docker-compose.yml
+.gitignore
+.dockerignore
+.containerignore

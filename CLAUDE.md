@@ -9,6 +9,6 @@
 ## Claude-Specific Capabilities
 - **Artifacts:** Use Claude Artifacts (markdown, html, react) to present complex code changes or diagrams when modifying over 50 lines.
 - **Thinking:** You are encouraged to provide a brief architectural thought process before writing code.
-- **Terminal:** If the user allows tool usage, logically group bash commands minimizing intermediate steps. ALWAYS run `./run-in-docker.sh lint` before claiming a task is finished to verify quality.
+- **Terminal:** If the user allows tool usage, logically group bash commands minimizing intermediate steps. ALWAYS run `./run-in-container.sh lint` before claiming a task is finished to verify quality.
 
 Default AI adapter reference: `.ai-context-os/CLAUDE.md`

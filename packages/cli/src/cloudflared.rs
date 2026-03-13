@@ -182,6 +182,34 @@ impl CloudflaredConfig {
             .stderr(std::process::Stdio::piped()); // capture stderr to extract hostname
         cmd
     }
+
+    pub fn start_access_tcp(
+        &self,
+        hostname: &str,
+        local_port: u16,
+        metrics_port: u16,
+    ) -> Result<std::process::Child, String> {
+        self.create_access_tcp_command(hostname, local_port, metrics_port)
+            .spawn()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn create_access_tcp_command(&self, hostname: &str, local_port: u16, metrics_port: u16) -> Command {
+        let local_url = format!("localhost:{local_port}");
+        let metrics_addr = format!("localhost:{metrics_port}");
+        let mut cmd = Command::new(&self.bin_path);
+        cmd.arg("access")
+            .arg("tcp")
+            .arg("--hostname")
+            .arg(hostname)
+            .arg("--url")
+            .arg(&local_url)
+            .arg("--metrics")
+            .arg(&metrics_addr)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        cmd
+    }
 }
 
 /// Parse the public hostname from a single cloudflared log line.
@@ -569,5 +597,26 @@ mod tests {
     fn test_get_release_name_macos_arm() {
         let result = get_release_name("macos", "aarch64");
         assert!(result.is_ok());
+    }
+    #[test]
+    fn test_create_access_tcp_command_args() {
+        let config = CloudflaredConfig {
+            bin_path: std::path::PathBuf::from("/usr/bin/cloudflared"),
+        };
+        let cmd = config.create_access_tcp_command("abc123.x.vlee.dev", 3000, 56000);
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(args, vec!["access", "tcp", "--hostname", "abc123.x.vlee.dev", "--url", "localhost:3000", "--metrics", "localhost:56000"]);
+    }
+
+    #[test]
+    fn test_create_access_tcp_command_custom_port() {
+        let config = CloudflaredConfig {
+            bin_path: std::path::PathBuf::from("/usr/bin/cloudflared"),
+        };
+        let cmd = config.create_access_tcp_command("tunnel.example.com", 8080, 56001);
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert!(args.contains(&"localhost:8080".to_string()));
+        assert!(args.contains(&"tunnel.example.com".to_string()));
+        assert!(args.contains(&"--metrics".to_string()));
     }
 }

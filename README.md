@@ -7,7 +7,7 @@ A lightning-fast, zero-config, terminal UI (TUI) wrapper for Cloudflare Tunnels 
 
 `xpose` takes the pain out of exposing your local development servers to the internet. It automatically handles binary downloads, tunnel management, and provides a beautiful, hacker-style real-time dashboard.
 
-- **Development**: Docker-first workflow with unified local/CI parity. See [docs/DOCKER.md](docs/DOCKER.md).
+- **Development**: Container-first workflow (Podman/Docker) with unified local/CI parity. See [docs/CONTAINERS.md](docs/CONTAINERS.md).
 
 ---
 
@@ -98,17 +98,17 @@ A Cloudflare Worker written in Rust (`workers-rs`) using D1 (SQLite) for state m
 If you wish to build the project from source:
 
 ### Prerequisites
-- Docker and Docker Compose installed on your host machine.
+- Podman 5.x + podman-compose (recommended) **or** Docker + Docker Compose installed on your host machine.
 
-### Docker Development Environment (Required)
-For a consistent environment across all platforms, **all development, building, and testing must be done via Docker**. Do NOT run `cargo` or `npm` directly on your host machine.
+### Container Development Environment (Required)
+For a consistent environment across all platforms, **all development, building, and testing must be done via containers**. Do NOT run `cargo` or `npm` directly on your host machine.
 
 ```bash
 # 1. Start the development container in the background
-docker-compose up -d
+podman-compose up -d
 
 # 2. Enter the container shell
-docker-compose exec dev bash
+podman-compose exec dev bash
 
 # 3. Inside the container, you can run cargo/npm normally:
 cd packages/cli

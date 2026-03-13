@@ -9,6 +9,6 @@
 ## Gemini-Specific Capabilities
 - **Context Window:** Leverage your massive context window to cross-reference multiple skills before execution.
 - **Strict Adherence:** Follow operational protocols extremely tightly. Treat `PROJECT_OS.md` as immutable law.
-- **Tool Selection:** Always prioritize native API tools over raw bash commands. Use `task_boundary` mechanic stringently. ALWAYS run `./run-in-docker.sh lint` before claiming a task is finished to verify quality.
+- **Tool Selection:** Always prioritize native API tools over raw bash commands. Use `task_boundary` mechanic stringently. ALWAYS run `./run-in-container.sh lint` before claiming a task is finished to verify quality.
 
 Default AI adapter reference: `.ai-context-os/GEMINI.md`

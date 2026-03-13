@@ -15,6 +15,12 @@ struct Tunnel {
     public_url: Option<String>,
     dynamic: Option<i64>,
     cf_tunnel_id: Option<String>,
+    access_token: Option<String>,
+}
+
+/// Generate a random 16-char hex access token
+fn generate_access_token() -> String {
+    uuid::Uuid::new_v4().to_string().replace('-', "")[..16].to_string()
 }
 
 // ── Cloudflare API client ────────────────────────────────────────────────────
@@ -38,7 +44,20 @@ async fn cf_create_tunnel(
 
     let req = worker::Request::new_with_init(&url, &init)?;
     let mut resp = Fetch::Request(req).send().await?;
-    let json: serde_json::Value = resp.json().await?;
+    let status = resp.status_code();
+    let text = resp.text().await.unwrap_or_default();
+
+    if text.is_empty() {
+        return Err(worker::Error::RustError(format!(
+            "CF create tunnel: empty response (status {status}). Check token permissions."
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        worker::Error::RustError(format!(
+            "CF create tunnel: invalid JSON (status {status}): {e}"
+        ))
+    })?;
 
     if !json["success"].as_bool().unwrap_or(false) {
         let err = json["errors"]
@@ -95,7 +114,20 @@ async fn cf_configure_ingress(
 
     let req = worker::Request::new_with_init(&url, &init)?;
     let mut resp = Fetch::Request(req).send().await?;
-    let json: serde_json::Value = resp.json().await?;
+    let status = resp.status_code();
+    let text = resp.text().await.unwrap_or_default();
+
+    if text.is_empty() {
+        return Err(worker::Error::RustError(format!(
+            "CF configure ingress: empty response (status {status}). Check token permissions."
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        worker::Error::RustError(format!(
+            "CF configure ingress: invalid JSON (status {status}): {e}"
+        ))
+    })?;
 
     if !json["success"].as_bool().unwrap_or(false) {
         let err = json["errors"]
@@ -111,17 +143,82 @@ async fn cf_configure_ingress(
     Ok(())
 }
 
-/// Creates a DNS route (CNAME) for the tunnel.
+/// Extracts the root zone name from a hostname.
+/// e.g. "abc.x.vlee.dev" → "vlee.dev", "sub.example.com" → "example.com"
+fn extract_zone_name(hostname: &str) -> &str {
+    let parts: Vec<&str> = hostname.rsplitn(3, '.').collect();
+    if parts.len() >= 2 {
+        // parts = ["dev", "vlee", "abc.x"] (reversed) → we want "vlee.dev"
+        let dot_pos = hostname.len() - parts[0].len() - parts[1].len() - 1;
+        &hostname[dot_pos..]
+    } else {
+        hostname
+    }
+}
+
+/// Looks up the Cloudflare zone ID for a domain name.
+async fn cf_get_zone_id(api_token: &str, zone_name: &str) -> worker::Result<String> {
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/zones?name={zone_name}&status=active"
+    );
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_token}"))?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+
+    let req = worker::Request::new_with_init(&url, &init)?;
+    let mut resp = Fetch::Request(req).send().await?;
+    let status = resp.status_code();
+    let text = resp.text().await.unwrap_or_default();
+
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        worker::Error::RustError(format!(
+            "CF get zone: invalid JSON (status {status}): {e}"
+        ))
+    })?;
+
+    if !json["success"].as_bool().unwrap_or(false) {
+        let err = json["errors"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("unknown error");
+        return Err(worker::Error::RustError(format!("CF get zone: {err}")));
+    }
+
+    json["result"]
+        .as_array()
+        .and_then(|r| r.first())
+        .and_then(|z| z["id"].as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            worker::Error::RustError(format!(
+                "Zone '{zone_name}' not found. Ensure domain is added to your Cloudflare account."
+            ))
+        })
+}
+
+/// Creates a DNS CNAME record pointing hostname → tunnel.cfargotunnel.com.
 async fn cf_route_dns(
-    account_id: &str,
+    _account_id: &str,
     api_token: &str,
     cf_tunnel_id: &str,
     hostname: &str,
 ) -> worker::Result<()> {
+    let zone_name = extract_zone_name(hostname);
+    let zone_id = cf_get_zone_id(api_token, zone_name).await?;
+
     let url = format!(
-        "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{cf_tunnel_id}/routes"
+        "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
     );
-    let body = serde_json::json!({ "type": "dns", "user_hostname": hostname });
+    let body = serde_json::json!({
+        "type": "CNAME",
+        "name": hostname,
+        "content": format!("{cf_tunnel_id}.cfargotunnel.com"),
+        "proxied": true,
+        "comment": "xpose dynamic tunnel"
+    });
     let headers = Headers::new();
     headers.set("Authorization", &format!("Bearer {api_token}"))?;
     headers.set("Content-Type", "application/json")?;
@@ -133,7 +230,20 @@ async fn cf_route_dns(
 
     let req = worker::Request::new_with_init(&url, &init)?;
     let mut resp = Fetch::Request(req).send().await?;
-    let json: serde_json::Value = resp.json().await?;
+    let status = resp.status_code();
+    let text = resp.text().await.unwrap_or_default();
+
+    if text.is_empty() {
+        return Err(worker::Error::RustError(format!(
+            "CF route DNS: empty response (status {status}). Check token has DNS:Edit permission for zone '{zone_name}'."
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        worker::Error::RustError(format!(
+            "CF route DNS: invalid JSON (status {status}): {e}"
+        ))
+    })?;
 
     if !json["success"].as_bool().unwrap_or(false) {
         let err = json["errors"]
@@ -346,6 +456,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         .post_async("/api/request", handle_request_tunnel)
         .post_async("/api/heartbeat", handle_heartbeat)
         .post_async("/api/release", handle_release)
+        .post_async("/api/verify-access", handle_verify_access)
         .get_async("/api/stats", handle_stats)
         .post_async("/api/telemetry", handle_telemetry)
         .run(req, env)
@@ -620,7 +731,7 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
         return Response::from_json(&serde_json::json!({
             "success": true,
             "message": "Reconnected",
-            "tunnel": { "id": t.id, "name": t.name, "token": t.token, "public_url": t.public_url }
+            "tunnel": { "id": t.id, "name": t.name, "token": t.token, "public_url": t.public_url, "access_token": t.access_token }
         }));
     }
 
@@ -663,7 +774,55 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
             }
         }
         None => {
-            // No pool tunnel available — try dynamic provisioning via Cloudflare API
+            // No pool tunnel available — check for a previously released dynamic tunnel for this device
+            let released_dynamic: Option<Tunnel> = db
+                .prepare("SELECT * FROM tunnels WHERE status = 'RELEASED' AND dynamic = 1 AND device_id = ?")
+                .bind(&[body.device_id.clone().into()])?
+                .first::<Tunnel>(None)
+                .await
+                .unwrap_or(None);
+
+            if let Some(t) = released_dynamic {
+                let port = body.port.unwrap_or(80);
+                let protocol = body.protocol.clone().unwrap_or_else(|| "tcp".to_string());
+                let old_port = t.port.unwrap_or(0);
+
+                // Re-activate: mark as BUSY with updated port/protocol
+                db.prepare("UPDATE tunnels SET status = 'BUSY', port = ?, protocol = ?, last_heartbeat = ? WHERE id = ?")
+                    .bind(&[
+                        port.into(),
+                        protocol.clone().into(),
+                        now.into(),
+                        t.id.clone().into(),
+                    ])?
+                    .run()
+                    .await?;
+
+                // Reconfigure ingress only if port changed
+                if old_port != port {
+                    let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
+                    let account_id = ctx.env.var("CLOUDFLARE_ACCOUNT_ID").map(|v| v.to_string()).ok();
+                    if let (Some(api_token), Some(account_id), Some(ref cf_tunnel_id)) =
+                        (&api_token, &account_id, &t.cf_tunnel_id)
+                    {
+                        let hostname = t.public_url.as_deref().unwrap_or("").trim_start_matches("tcp://");
+                        if let Err(e) = cf_configure_ingress(
+                            account_id, api_token, cf_tunnel_id, hostname, port, &protocol,
+                        ).await {
+                            console_log!("[Sticky] Ingress reconfigure failed (non-fatal): {}", e);
+                        }
+                    }
+                }
+
+                console_log!("[Sticky] Reusing tunnel {} for device {}", t.name, body.device_id);
+                return Response::from_json(&serde_json::json!({
+                    "success": true,
+                    "message": "Reconnected (sticky)",
+                    "tunnel": { "id": t.id, "name": t.name, "token": t.token, "public_url": t.public_url, "access_token": t.access_token }
+                }));
+            }
+
+            // No sticky tunnel either — try dynamic provisioning via Cloudflare API
             let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
             let account_id = ctx
                 .env
@@ -724,10 +883,11 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                         return json_error(format!("Failed to route DNS: {e}"), 503);
                     }
 
-                    // Persist to DB
+                    // Persist to DB with access token
                     let tunnel_id = uuid::Uuid::new_v4().to_string();
+                    let access_token = generate_access_token();
                     let res = db
-                        .prepare("INSERT INTO tunnels (id, name, token, status, device_id, port, protocol, last_heartbeat, created_at, public_url, dynamic, cf_tunnel_id) VALUES (?, ?, ?, 'BUSY', ?, ?, ?, ?, ?, ?, 1, ?)")
+                        .prepare("INSERT INTO tunnels (id, name, token, status, device_id, port, protocol, last_heartbeat, created_at, public_url, dynamic, cf_tunnel_id, access_token) VALUES (?, ?, ?, 'BUSY', ?, ?, ?, ?, ?, ?, 1, ?, ?)")
                         .bind(&[
                             tunnel_id.clone().into(),
                             tunnel_name.clone().into(),
@@ -739,6 +899,7 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                             now.into(),
                             public_url.clone().into(),
                             cf_tunnel_id.into(),
+                            access_token.clone().into(),
                         ])?
                         .run()
                         .await;
@@ -750,7 +911,8 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                                 "id": tunnel_id,
                                 "name": tunnel_name,
                                 "token": token,
-                                "public_url": public_url
+                                "public_url": public_url,
+                                "access_token": access_token
                             }
                         })),
                         Err(e) => json_error(format!("DB error: {e}"), 500),
@@ -802,26 +964,11 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
 
     if let Some(ref t) = tunnel {
         if t.dynamic.unwrap_or(0) == 1 {
-            // Delete the dynamic tunnel from DB entirely
-            db.prepare("DELETE FROM tunnels WHERE id = ?")
+            // Dynamic tunnel: mark as RELEASED (keep for sticky reuse by same device)
+            db.prepare("UPDATE tunnels SET status = 'RELEASED', port = NULL, last_heartbeat = NULL WHERE id = ?")
                 .bind(&[t.id.clone().into()])?
                 .run()
                 .await?;
-
-            // Clean up from Cloudflare API asynchronously (best-effort)
-            let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
-            let account_id = ctx
-                .env
-                .var("CLOUDFLARE_ACCOUNT_ID")
-                .map(|v| v.to_string())
-                .ok();
-            if let (Some(api_token), Some(account_id), Some(cf_tunnel_id)) =
-                (api_token, account_id, t.cf_tunnel_id.clone())
-            {
-                if let Err(e) = cf_delete_tunnel(&account_id, &api_token, &cf_tunnel_id).await {
-                    console_log!("[Release] CF delete tunnel failed (non-fatal): {}", e);
-                }
-            }
         } else {
             // Static pool tunnel: mark as available
             db.prepare("UPDATE tunnels SET status = 'AVAILABLE', device_id = NULL, port = NULL, last_heartbeat = NULL WHERE id = ?")
@@ -832,6 +979,44 @@ async fn handle_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     }
 
     Response::from_json(&serde_json::json!({"success": true}))
+}
+
+#[derive(Deserialize)]
+struct VerifyAccessRequest {
+    hostname: String,
+    access_token: String,
+}
+
+async fn handle_verify_access(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let body: VerifyAccessRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => return json_error(format!("Invalid JSON: {}", e), 400),
+    };
+    let db = ctx.env.d1("DB")?;
+
+    // Look up active tunnel by public_url containing the hostname
+    let public_url = format!("tcp://{}", body.hostname);
+    let tunnel: Option<Tunnel> = db
+        .prepare("SELECT * FROM tunnels WHERE public_url = ? AND status = 'BUSY'")
+        .bind(&[public_url.into()])?
+        .first::<Tunnel>(None)
+        .await
+        .unwrap_or(None);
+
+    match tunnel {
+        Some(t) => {
+            let stored_token = t.access_token.unwrap_or_default();
+            if stored_token == body.access_token {
+                Response::from_json(&serde_json::json!({
+                    "success": true,
+                    "message": "Access granted"
+                }))
+            } else {
+                json_error("Invalid access token", 403)
+            }
+        }
+        None => json_error("No active tunnel for this hostname", 404),
+    }
 }
 
 pub fn calculate_stats(rows: Vec<serde_json::Value>) -> (u64, u64, u64) {
@@ -928,6 +1113,7 @@ mod tests {
             public_url: None,
             dynamic: None,
             cf_tunnel_id: None,
+            access_token: None,
         };
         let json = serde_json::to_string(&tunnel).unwrap();
         assert!(json.contains("\"id\":\"t1\""));
@@ -1106,6 +1292,17 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_zone_name() {
+        // Nested subdomains
+        assert_eq!(extract_zone_name("abc123.x.vlee.dev"), "vlee.dev");
+        assert_eq!(extract_zone_name("tunnel.example.com"), "example.com");
+        // Direct subdomain
+        assert_eq!(extract_zone_name("sub.example.com"), "example.com");
+        // Already root
+        assert_eq!(extract_zone_name("example.com"), "example.com");
+    }
+
+    #[test]
     fn test_cf_tunnel_token_var_name() {
         // Ensures the runtime secret name stays in sync with wrangler secret put docs
         // and DEPLOYMENT.md. Changing this constant without updating docs/infra will
@@ -1126,5 +1323,26 @@ mod tests {
         // Worker deploy token and tunnel provisioning token must never share the same
         // secret name — each requires different Cloudflare permissions (least privilege).
         assert_ne!(CF_WORKER_TOKEN_VAR, CF_TUNNEL_TOKEN_VAR);
+    }
+    #[test]
+    fn test_generate_access_token_length() {
+        let token = generate_access_token();
+        assert_eq!(token.len(), 16, "access token should be 16 chars");
+    }
+
+    #[test]
+    fn test_generate_access_token_hex_only() {
+        let token = generate_access_token();
+        assert!(
+            token.chars().all(|c| c.is_ascii_hexdigit()),
+            "access token should only contain hex characters: {token}"
+        );
+    }
+
+    #[test]
+    fn test_generate_access_token_unique() {
+        let t1 = generate_access_token();
+        let t2 = generate_access_token();
+        assert_ne!(t1, t2, "two generated tokens should be different");
     }
 }

@@ -35,7 +35,7 @@
 				{
 					"binding": "DB",
 					"database_name": "tunnel-db-staging",
-					"database_id": "__STAGING_D1_ID__",
+					"database_id": "8349cf3d-8be0-405e-bfc5-3ca55d3b96e6",
 					"migrations_dir": "./migrations"
 				}
 			],

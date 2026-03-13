@@ -47,7 +47,7 @@ fn cli_styles() -> Styles {
     version,
     about = "Cloudflare Tunnel CLI for developers",
     styles = cli_styles(),
-    after_help = "\x1b[1;32mEXAMPLES:\x1b[0m\n  \x1b[90m# Expose local port 3000\x1b[0m\n  \x1b[36m$ xpose 3000\x1b[0m\n\n  \x1b[90m# Open interactive dashboard\x1b[0m\n  \x1b[36m$ xpose dashboard\x1b[0m\n"
+    after_help = "\x1b[1;32mEXAMPLES:\x1b[0m\n  \x1b[90m# Expose local port 3000\x1b[0m\n  \x1b[36m$ xpose 3000\x1b[0m\n\n  \x1b[90m# Connect to a remote tunnel\x1b[0m\n  \x1b[36m$ xpose connect abc123.x.vlee.dev\x1b[0m\n\n  \x1b[90m# Open interactive dashboard\x1b[0m\n  \x1b[36m$ xpose dashboard\x1b[0m\n"
 )]
 struct Args {
     #[command(subcommand)]
@@ -73,6 +73,15 @@ struct Args {
 enum Commands {
     #[command(about = "Open local management dashboard")]
     Dashboard,
+    #[command(about = "Connect to a remote tunnel (client mode)")]
+    Connect {
+        #[arg(help = "Remote tunnel hostname (e.g. abc123.x.vlee.dev)")]
+        hostname: String,
+        #[arg(short, long, default_value = "3000", help = "Local port to listen on")]
+        port: u16,
+        #[arg(short, long, help = "Access token from the tunnel server")]
+        token: String,
+    },
     #[command(about = "Check and install CLI updates")]
     Update {
         #[arg(long, help = "Force update even if up to date")]
@@ -205,6 +214,9 @@ async fn run_cli(
                 handle_config(action, yaml_config, &ui, i18n).await;
                 return 0;
             }
+            Commands::Connect { hostname, port, token } => {
+                return run_connect(&ui, i18n, &hostname, port, &token, &server_url).await;
+            }
         }
     }
 
@@ -256,6 +268,174 @@ async fn run_cli(
     )
     .await;
     exit_code
+}
+
+async fn run_connect(
+    ui: &Arc<Mutex<Ui>>,
+    i18n: &i18n::I18n,
+    hostname: &str,
+    local_port: u16,
+    access_token: &str,
+    server_url: &str,
+) -> i32 {
+    // Strip tcp:// prefix if present
+    let hostname = hostname
+        .trim_start_matches("tcp://")
+        .trim_start_matches("https://");
+
+    // Ensure cloudflared is available
+    let cf = cloudflared::CloudflaredConfig::new();
+    if !cf.bin_path.exists() {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.info("cloudflared not found. Downloading...");
+        drop(ui_lock);
+        match cf.download().await {
+            Ok(()) => {}
+            Err(e) => {
+                let ui_lock = ui.lock().expect("Failed to lock UI");
+                ui_lock.error(&format!("Failed to download cloudflared: {e}"));
+                return 1;
+            }
+        }
+    }
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.success(&i18n.t("cloudflared_found"));
+    }
+
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.info("Verifying access token...");
+    }
+    let api_client = api::ApiClient::new(server_url.to_string());
+    match api_client.verify_access(hostname, access_token).await {
+        Ok(()) => {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.success("Access granted.");
+        }
+        Err(e) => {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Access denied: {e}"));
+            return 1;
+        }
+    }
+
+    {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.info(&format!("Connecting to {hostname} → localhost:{local_port}..."));
+    }
+
+    // Pick a metrics port for cloudflared access tcp
+    let metrics_port = 56000u16;
+
+    // Start cloudflared access tcp
+    let mut child: std::process::Child = match cf.start_access_tcp(hostname, local_port, metrics_port) {
+        Ok(child) => child,
+        Err(e) => {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.error(&format!("Failed to start cloudflared access: {e}"));
+            return 1;
+        }
+    };
+
+    // Brief wait to check for immediate failure
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    if let Ok(Some(status)) = child.try_wait() {
+        let ui_lock = ui.lock().expect("Failed to lock UI");
+        ui_lock.error(&format!("cloudflared access exited immediately with {status}"));
+        return 1;
+    }
+
+    // Show connected panel
+    {
+        let _ui_lock = ui.lock().expect("Failed to lock UI");
+        let border = style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").cyan();
+        println!();
+        println!("  🔗 {}", style("Connected (client mode)").green().bold());
+        println!("{border}");
+        println!("  {} : {}", style("Remote").bold().blue(), style(hostname).green().underlined());
+        println!("  {}  : {}", style("Local").bold().blue(), style(format!("localhost:{local_port}")).yellow().bold());
+        println!("  {} : {}", style("Mode").bold().blue(), style("TCP Proxy").magenta().bold());
+        println!("{border}");
+        println!();
+        println!("  {} {}", style("💡 Hint:").yellow().italic(), style("[Ctrl+C] Quit").bright().black());
+        println!();
+    }
+
+    // Live metrics loop (same as server mode)
+    let ui_clone = Arc::clone(ui);
+    let metrics_url = format!("http://localhost:{metrics_port}/metrics");
+    let metrics_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    let pid = sysinfo::Pid::from_u32(child.id());
+    let mut sys = sysinfo::System::new();
+    let mut last_rx: u64 = 0;
+    let mut last_tx: u64 = 0;
+
+    let metrics_handle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                false,
+                sysinfo::ProcessRefreshKind::nothing().with_memory(),
+            );
+            let ram_bytes = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
+
+            let start = tokio::time::Instant::now();
+            if let Ok(res) = metrics_client.get(&metrics_url).send().await {
+                let ping_ms = start.elapsed().as_millis() as u64;
+                if let Ok(text) = res.text().await {
+                    let mut rx_bytes = last_rx;
+                    let mut tx_bytes = last_tx;
+
+                    for line in text.lines() {
+                        if line.starts_with("cloudflared_tunnel_rx_bytes") {
+                            if let Some(val) = line.split_whitespace().last() {
+                                rx_bytes = val.parse().unwrap_or(last_rx);
+                            }
+                        } else if line.starts_with("cloudflared_tunnel_tx_bytes") {
+                            if let Some(val) = line.split_whitespace().last() {
+                                tx_bytes = val.parse().unwrap_or(last_tx);
+                            }
+                        }
+                    }
+
+                    let mut total_requests: u64 = 0;
+                    for line in text.lines() {
+                        if line.starts_with("cloudflared_tunnel_total_requests") && !line.starts_with('#') {
+                            if let Some(val) = line.split_whitespace().last() {
+                                total_requests = val.parse().unwrap_or(0);
+                            }
+                        }
+                    }
+
+                    let rx_speed = rx_bytes.saturating_sub(last_rx);
+                    let tx_speed = tx_bytes.saturating_sub(last_tx);
+                    last_rx = rx_bytes;
+                    last_tx = tx_bytes;
+
+                    if let Ok(mut ui) = ui_clone.lock() {
+                        ui.draw_live_metrics(
+                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes, total_requests,
+                        );
+                    }
+                }
+            }
+        }
+    });
+
+    // Wait for Ctrl+C
+    let _ = tokio::signal::ctrl_c().await;
+    metrics_handle.abort();
+    println!("\nDisconnecting...");
+    let _ = child.kill();
+    let _ = child.wait();
+    0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -366,8 +546,6 @@ async fn run_tunnel(
         url
     } else {
         // Legacy: no server URL — attempt to read it from cloudflared stderr.
-        // This covers quick-tunnel mode (trycloudflare.com) where Cloudflare
-        // assigns a random hostname and logs it as plain text.
         let fallback_url = format!("https://{}.trycloudflare.com", tunnel_info.name);
         if let Some(stderr) = child.stderr.take() {
             let parse_task = tokio::task::spawn_blocking(move || {
@@ -380,7 +558,7 @@ async fn run_tunnel(
                 }
                 None
             });
-            match tokio::time::timeout(Duration::from_secs(5), parse_task).await {
+            match tokio::time::timeout(Duration::from_secs(15), parse_task).await {
                 Ok(Ok(Some(detected))) => detected,
                 _ => fallback_url,
             }
@@ -392,7 +570,7 @@ async fn run_tunnel(
 
     {
         let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.draw_connected_panel(port, &public_url, protocol);
+        ui_lock.draw_connected_panel(port, &public_url, protocol, tunnel_info.access_token.as_deref());
     }
 
     // Hook: on_connect
@@ -486,6 +664,16 @@ async fn run_tunnel(
                         }
                     }
 
+                    // Count active connections from cloudflared_tunnel_total_requests
+                    let mut total_requests: u64 = 0;
+                    for line in text.lines() {
+                        if line.starts_with("cloudflared_tunnel_total_requests") && !line.starts_with('#') {
+                            if let Some(val) = line.split_whitespace().last() {
+                                total_requests = val.parse().unwrap_or(0);
+                            }
+                        }
+                    }
+
                     let rx_speed = rx_bytes.saturating_sub(last_rx);
                     let tx_speed = tx_bytes.saturating_sub(last_tx);
                     last_rx = rx_bytes;
@@ -493,7 +681,7 @@ async fn run_tunnel(
 
                     if let Ok(mut ui) = ui_clone.lock() {
                         ui.draw_live_metrics(
-                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes,
+                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes, total_requests,
                         );
                     }
                 }
@@ -710,7 +898,7 @@ async fn request_and_connect_tunnel(
     port: u16,
     protocol: &str,
     device_id: &str,
-) -> Result<TunnelInfo, ()> {
+) -> Result<TunnelInfo, String> {
     let pb = {
         let ui_lock = ui.lock().expect("Failed to lock UI");
         ui_lock.create_spinner(i18n.t("requesting_tunnel"))
@@ -722,15 +910,17 @@ async fn request_and_connect_tunnel(
         Ok(r) => r,
         Err(e) => {
             pb.finish_and_clear();
+            let mapped = map_error(&e);
             let ui_lock = ui.lock().expect("Failed to lock UI");
-            ui_lock.error(&map_error(&e));
-            return Err(());
+            ui_lock.error(&mapped);
+            return Err(mapped);
         }
     };
 
     pb.finish_with_message(i18n.t("tunnel_allocated"));
     Ok(res)
 }
+
 
 async fn handle_update(
     api: &ApiClient,
@@ -1185,6 +1375,82 @@ mod tests {
         let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
         assert!(res.is_err());
+        // Error message should be propagated (not unit type)
+        let err = res.unwrap_err();
+        assert!(
+            !err.is_empty(),
+            "Error should contain a meaningful message"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_and_connect_tunnel_503_error_message() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(503)
+            .with_body(r#"{"error": "No tunnels available"}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("No tunnels available"),
+            "503 error should mention 'No tunnels available', got: {err}"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_and_connect_tunnel_429_error_message() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(429)
+            .with_body(r#"{"error": "Too many requests"}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let res = request_and_connect_tunnel(&api, &ui, &i18n, 3000, "tcp", "dev1").await;
+        let err = res.unwrap_err();
+        // map_error doesn't have a 429 branch, so it falls through to "unexpected"
+        assert!(
+            !err.is_empty(),
+            "429 should return a meaningful error message"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_and_connect_tunnel_403_error_message() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        let mock = server
+            .mock("POST", "/api/request")
+            .with_status(403)
+            .with_body(r#"{"error": "Port 25 is restricted for security reasons."}"#)
+            .create_async()
+            .await;
+
+        let api = ApiClient::new(url);
+        let i18n = i18n::I18n::new(None);
+        let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
+        let res = request_and_connect_tunnel(&api, &ui, &i18n, 25, "tcp", "dev1").await;
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("Access denied") || err.contains("restricted"),
+            "403 should mention access denied, got: {err}"
+        );
         mock.assert_async().await;
     }
 
@@ -1225,6 +1491,93 @@ mod tests {
         let ui = Arc::new(Mutex::new(Ui::new_silent(i18n.clone())));
         let code = run_cli(args, config, &i18n, ui).await;
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_parse_connect_command() {
+        let args = Args::parse_from(["xpose", "connect", "abc123.x.vlee.dev", "--token", "abc123def456"]);
+        match args.command {
+            Some(Commands::Connect { hostname, port, token }) => {
+                assert_eq!(hostname, "abc123.x.vlee.dev");
+                assert_eq!(port, 3000); // default
+                assert_eq!(token, "abc123def456");
+            }
+            _ => panic!("Expected Connect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_connect_command_custom_port() {
+        let args = Args::parse_from(["xpose", "connect", "abc.x.vlee.dev", "--port", "8080", "--token", "mytoken"]);
+        match args.command {
+            Some(Commands::Connect { hostname, port, token }) => {
+                assert_eq!(hostname, "abc.x.vlee.dev");
+                assert_eq!(port, 8080);
+                assert_eq!(token, "mytoken");
+            }
+            _ => panic!("Expected Connect command"),
+        }
+    }
+
+    #[test]
+    fn test_connect_hostname_strip_prefix() {
+        // run_connect strips tcp:// and https:// prefixes
+        let raw = "tcp://abc.x.vlee.dev";
+        let stripped = raw
+            .trim_start_matches("tcp://")
+            .trim_start_matches("https://");
+        assert_eq!(stripped, "abc.x.vlee.dev");
+
+        let raw_https = "https://abc.x.vlee.dev";
+        let stripped_https = raw_https
+            .trim_start_matches("tcp://")
+            .trim_start_matches("https://");
+        assert_eq!(stripped_https, "abc.x.vlee.dev");
+    }
+
+    #[tokio::test]
+    async fn test_verify_access_success() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/api/verify-access")
+            .with_status(200)
+            .with_body(r#"{"success":true,"message":"Access granted"}"#)
+            .create_async()
+            .await;
+        let api = api::ApiClient::new(server.url());
+        let result = api.verify_access("abc.x.vlee.dev", "validtoken").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_verify_access_invalid_token() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/api/verify-access")
+            .with_status(403)
+            .with_body(r#"{"error":"Invalid access token"}"#)
+            .create_async()
+            .await;
+        let api = api::ApiClient::new(server.url());
+        let result = api.verify_access("abc.x.vlee.dev", "wrongtoken").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid access token"));
+    }
+
+    #[test]
+    fn test_draw_connected_panel_with_access_token() {
+        let i18n = i18n::I18n::new(None);
+        let ui = ui::Ui::new_silent(i18n);
+        // Should not panic with Some token
+        ui.draw_connected_panel(3000, "tcp://abc.x.vlee.dev", "tcp", Some("a1b2c3d4e5f67890"));
+    }
+
+    #[test]
+    fn test_draw_connected_panel_without_access_token() {
+        let i18n = i18n::I18n::new(None);
+        let ui = ui::Ui::new_silent(i18n);
+        // Should not panic with None token
+        ui.draw_connected_panel(3000, "tcp://abc.x.vlee.dev", "tcp", None);
     }
 
     #[tokio::test]

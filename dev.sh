@@ -26,10 +26,22 @@ show_usage() {
 
 COMMAND=${1:-help}
 
+# --- Auto-detect container engine ---
+if command -v podman &>/dev/null; then
+    ENGINE="podman"
+    COMPOSE_CMD="podman-compose"
+elif command -v docker &>/dev/null; then
+    ENGINE="docker"
+    COMPOSE_CMD="docker compose"
+else
+    echo "❌ Neither podman nor docker found. Please install one."
+    exit 1
+fi
+
 case "$COMMAND" in
     up)
         echo "🚀 Starting key-server-dev..."
-        docker compose up key-server-dev -d --build
+        $COMPOSE_CMD up key-server-dev -d --build
         echo ""
         echo "⏳ Waiting for key-server to be healthy (first build may take 2-5 min)..."
         echo "   Run './dev.sh logs' in another terminal to watch progress."
@@ -38,7 +50,7 @@ case "$COMMAND" in
         MAX_WAIT=300
         ELAPSED=0
         while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS=$(docker compose ps key-server-dev --format json 2>/dev/null | grep -o '"Health":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+            STATUS=$($COMPOSE_CMD ps key-server-dev --format json 2>/dev/null | grep -o '"Health":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
             if [ "$STATUS" = "healthy" ]; then
                 echo "✅ key-server-dev is healthy!"
                 echo ""
@@ -57,14 +69,14 @@ case "$COMMAND" in
         ;;
     down)
         echo "🛑 Stopping dev services..."
-        docker compose down
+        $COMPOSE_CMD down
         echo "✅ Done."
         ;;
     logs)
-        docker compose logs -f key-server-dev
+        $COMPOSE_CMD logs -f key-server-dev
         ;;
     status)
-        docker compose ps key-server-dev
+        $COMPOSE_CMD ps key-server-dev
         echo ""
         echo "Quick API check:"
         curl -sf http://localhost:8787/api/config 2>/dev/null && echo "" || echo "❌ Key server not responding"
@@ -102,12 +114,12 @@ case "$COMMAND" in
     cli)
         shift
         echo "🔨 Building and running xpose CLI → http://localhost:8787"
-        docker compose run --rm \
+        $COMPOSE_CMD run --rm \
             -e XPOSE_SERVER_URL=http://key-server-dev:8787 \
             dev bash -c "cd packages/cli && cargo run -- $*"
         ;;
     shell)
-        docker compose run --rm dev bash
+        $COMPOSE_CMD run --rm dev bash
         ;;
     staging-setup)
         echo "🔧 Setting up staging environment..."
@@ -132,7 +144,7 @@ case "$COMMAND" in
         # Create D1 database if not already done
         if [ -z "$STAGING_D1_ID" ] || [ "$STAGING_D1_ID" = "your-staging-d1-id-here" ]; then
             echo "🗄️  Creating D1 database: tunnel-db-staging..."
-            D1_OUTPUT=$(docker compose run --rm \
+            D1_OUTPUT=$($COMPOSE_CMD run --rm \
                 -e CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
                 dev bash -c "cd packages/key-server && wrangler d1 create tunnel-db-staging" 2>&1)
             echo "$D1_OUTPUT"
@@ -157,11 +169,12 @@ case "$COMMAND" in
 
         source .env.staging
 
-        # Run migrations + deploy inside Docker
+        # Run migrations + deploy inside container
         echo ""
         echo "📦 Running D1 migrations + deploying to staging..."
-        docker compose run --rm \
+        $COMPOSE_CMD run --rm \
             -e CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+            -e CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}" \
             dev bash -c "
                 cd packages/key-server &&
                 wrangler d1 migrations apply tunnel-db-staging --remote --env staging &&
@@ -169,6 +182,37 @@ case "$COMMAND" in
                 echo '🚀 Deploying key-server-staging...' &&
                 wrangler deploy --env staging
             "
+
+        # Set tunnel provisioning secrets (if configured)
+        if [ -n "${CLOUDFLARE_API_TUNNEL_TOKEN:-}" ] && [ "$CLOUDFLARE_API_TUNNEL_TOKEN" != "your-tunnel-api-token-here" ]; then
+            echo ""
+            echo "🔐 Setting tunnel provisioning secrets..."
+            $COMPOSE_CMD run --rm \
+                -e CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+                -e CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}" \
+                dev bash -c "
+                    cd packages/key-server &&
+                    echo '${CLOUDFLARE_API_TUNNEL_TOKEN}' | wrangler secret put CLOUDFLARE_API_TUNNEL_TOKEN --env staging &&
+                    echo '${CLOUDFLARE_ACCOUNT_ID}' | wrangler secret put CLOUDFLARE_ACCOUNT_ID --env staging
+                "
+            # Set tunnel domain only if configured (optional — omit for quick tunnels)
+            if [ -n "${CLOUDFLARE_TUNNEL_DOMAIN:-}" ] && [ "$CLOUDFLARE_TUNNEL_DOMAIN" != "your-tunnel-domain-here" ]; then
+                $COMPOSE_CMD run --rm \
+                    -e CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+                    -e CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}" \
+                    dev bash -c "
+                        cd packages/key-server &&
+                        echo '${CLOUDFLARE_TUNNEL_DOMAIN}' | wrangler secret put CLOUDFLARE_TUNNEL_DOMAIN --env staging
+                    "
+                echo "✅ Tunnel secrets configured (with custom domain: $CLOUDFLARE_TUNNEL_DOMAIN)"
+            else
+                echo "✅ Tunnel secrets configured (quick tunnels — no custom domain)"
+            fi
+        else
+            echo ""
+            echo "⚠️  Tunnel secrets not set (CLOUDFLARE_API_TUNNEL_TOKEN not configured in .env.staging)"
+            echo "   CLI tunnel allocation will not work until secrets are configured."
+        fi
 
         echo ""
         echo "🎉 Staging setup complete!"
@@ -187,8 +231,9 @@ case "$COMMAND" in
         fi
         source .env.staging
 
-        docker compose run --rm \
+        $COMPOSE_CMD run --rm \
             -e CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+            -e CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}" \
             dev bash -c "
                 cd packages/key-server &&
                 wrangler d1 migrations apply tunnel-db-staging --remote --env staging &&
@@ -247,7 +292,7 @@ case "$COMMAND" in
 
         shift
         echo "🔨 Building and running xpose CLI → $STAGING_WORKER_URL"
-        docker compose run --rm \
+        $COMPOSE_CMD run --rm \
             -e XPOSE_SERVER_URL="$STAGING_WORKER_URL" \
             dev bash -c "cd packages/cli && cargo run -- $*"
         ;;

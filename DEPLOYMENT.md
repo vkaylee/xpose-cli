@@ -40,7 +40,7 @@ git push origin v0.1.x
 
 ### 3. What happens next?
 1. **Lint/Test**: `ci.yml` verifies code quality.
-2. **Build**: GitHub Actions builds multi-platform binaries using Docker.
+2. **Build**: GitHub Actions builds multi-platform binaries using containers.
 3. **Deploy**: The Key Server is updated on Cloudflare.
 4. **Publish**: The New CLI version is pushed to NPM.
 

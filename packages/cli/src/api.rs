@@ -36,6 +36,7 @@ pub struct TunnelInfo {
     pub name: String,
     pub token: String,
     pub public_url: Option<String>,
+    pub access_token: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -199,6 +200,33 @@ impl ApiClient {
         let url = format!("{}/api/telemetry", self.base_url);
         let _ = self.client.post(&url).json(&payload).send().await;
         Ok(())
+    }
+
+    pub async fn verify_access(&self, hostname: &str, access_token: &str) -> Result<(), String> {
+        let url = format!("{}/api/verify-access", self.base_url);
+        let payload = serde_json::json!({
+            "hostname": hostname,
+            "access_token": access_token,
+        });
+        let res = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Connection error: {e}"))?;
+
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            let status = res.status().as_u16();
+            let body = res.text().await.unwrap_or_default();
+            let msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| format!("HTTP {status}"));
+            Err(msg)
+        }
     }
 
     pub async fn init_auth(&self) -> Result<AuthInitResponse, String> {
