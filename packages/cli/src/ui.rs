@@ -107,7 +107,13 @@ impl Ui {
             .write_line(&format!("{} {}", style("i").cyan().bold(), msg));
     }
 
-    pub fn draw_connected_panel(&self, port: u16, public_url: &str, protocol: &str, access_token: Option<&str>) {
+    pub fn draw_connected_panel(
+        &self,
+        port: u16,
+        public_url: &str,
+        protocol: &str,
+        access_token: Option<&str>,
+    ) {
         if self.silent {
             return;
         }
@@ -262,6 +268,7 @@ impl Ui {
         lines
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_live_metrics(
         &mut self,
         rx_bytes: u64,
@@ -291,7 +298,11 @@ impl Ui {
         let ram_formatted = Self::format_size(ram_bytes);
 
         let conn_status = if connections > 0 {
-            format!("{} {} conn", style("🔗").green(), style(connections).green().bold())
+            format!(
+                "{} {} conn",
+                style("🔗").green(),
+                style(connections).green().bold()
+            )
         } else {
             format!("{}", style("⏳ Waiting...").yellow().dim())
         };

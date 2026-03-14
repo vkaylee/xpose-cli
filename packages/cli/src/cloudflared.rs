@@ -187,16 +187,14 @@ impl CloudflaredConfig {
         &self,
         hostname: &str,
         local_port: u16,
-        metrics_port: u16,
     ) -> Result<std::process::Child, String> {
-        self.create_access_tcp_command(hostname, local_port, metrics_port)
+        self.create_access_tcp_command(hostname, local_port)
             .spawn()
             .map_err(|e| e.to_string())
     }
 
-    pub fn create_access_tcp_command(&self, hostname: &str, local_port: u16, metrics_port: u16) -> Command {
+    pub fn create_access_tcp_command(&self, hostname: &str, local_port: u16) -> Command {
         let local_url = format!("localhost:{local_port}");
-        let metrics_addr = format!("localhost:{metrics_port}");
         let mut cmd = Command::new(&self.bin_path);
         cmd.arg("access")
             .arg("tcp")
@@ -204,8 +202,6 @@ impl CloudflaredConfig {
             .arg(hostname)
             .arg("--url")
             .arg(&local_url)
-            .arg("--metrics")
-            .arg(&metrics_addr)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
         cmd
@@ -603,9 +599,22 @@ mod tests {
         let config = CloudflaredConfig {
             bin_path: std::path::PathBuf::from("/usr/bin/cloudflared"),
         };
-        let cmd = config.create_access_tcp_command("abc123.x.vlee.dev", 3000, 56000);
-        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-        assert_eq!(args, vec!["access", "tcp", "--hostname", "abc123.x.vlee.dev", "--url", "localhost:3000", "--metrics", "localhost:56000"]);
+        let cmd = config.create_access_tcp_command("abc123.x.vlee.dev", 3000);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "access",
+                "tcp",
+                "--hostname",
+                "abc123.x.vlee.dev",
+                "--url",
+                "localhost:3000"
+            ]
+        );
     }
 
     #[test]
@@ -613,10 +622,13 @@ mod tests {
         let config = CloudflaredConfig {
             bin_path: std::path::PathBuf::from("/usr/bin/cloudflared"),
         };
-        let cmd = config.create_access_tcp_command("tunnel.example.com", 8080, 56001);
-        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        let cmd = config.create_access_tcp_command("tunnel.example.com", 8080);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert!(args.contains(&"localhost:8080".to_string()));
         assert!(args.contains(&"tunnel.example.com".to_string()));
-        assert!(args.contains(&"--metrics".to_string()));
+        assert!(!args.contains(&"--metrics".to_string()));
     }
 }

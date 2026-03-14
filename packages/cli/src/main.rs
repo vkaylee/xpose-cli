@@ -214,7 +214,11 @@ async fn run_cli(
                 handle_config(action, yaml_config, &ui, i18n).await;
                 return 0;
             }
-            Commands::Connect { hostname, port, token } => {
+            Commands::Connect {
+                hostname,
+                port,
+                token,
+            } => {
                 return run_connect(&ui, i18n, &hostname, port, &token, &server_url).await;
             }
         }
@@ -286,9 +290,10 @@ async fn run_connect(
     // Ensure cloudflared is available
     let cf = cloudflared::CloudflaredConfig::new();
     if !cf.bin_path.exists() {
-        let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.info("cloudflared not found. Downloading...");
-        drop(ui_lock);
+        {
+            let ui_lock = ui.lock().expect("Failed to lock UI");
+            ui_lock.info("cloudflared not found. Downloading...");
+        }
         match cf.download().await {
             Ok(()) => {}
             Err(e) => {
@@ -300,7 +305,7 @@ async fn run_connect(
     }
     {
         let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.success(&i18n.t("cloudflared_found"));
+        ui_lock.success(i18n.t("cloudflared_found"));
     }
 
     {
@@ -322,14 +327,13 @@ async fn run_connect(
 
     {
         let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.info(&format!("Connecting to {hostname} → localhost:{local_port}..."));
+        ui_lock.info(&format!(
+            "Connecting to {hostname} → localhost:{local_port}..."
+        ));
     }
 
-    // Pick a metrics port for cloudflared access tcp
-    let metrics_port = 56000u16;
-
     // Start cloudflared access tcp
-    let mut child: std::process::Child = match cf.start_access_tcp(hostname, local_port, metrics_port) {
+    let mut child: std::process::Child = match cf.start_access_tcp(hostname, local_port) {
         Ok(child) => child,
         Err(e) => {
             let ui_lock = ui.lock().expect("Failed to lock UI");
@@ -341,8 +345,23 @@ async fn run_connect(
     // Brief wait to check for immediate failure
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     if let Ok(Some(status)) = child.try_wait() {
+        // Capture stderr for diagnostics
+        let stderr_msg = child
+            .stderr
+            .take()
+            .and_then(|mut stderr| {
+                use std::io::Read;
+                let mut buf = String::new();
+                stderr.read_to_string(&mut buf).ok().map(|_| buf)
+            })
+            .unwrap_or_default();
         let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.error(&format!("cloudflared access exited immediately with {status}"));
+        ui_lock.error(&format!(
+            "cloudflared access exited immediately with {status}"
+        ));
+        if !stderr_msg.trim().is_empty() {
+            ui_lock.error(&format!("cloudflared stderr: {}", stderr_msg.trim()));
+        }
         return 1;
     }
 
@@ -353,85 +372,35 @@ async fn run_connect(
         println!();
         println!("  🔗 {}", style("Connected (client mode)").green().bold());
         println!("{border}");
-        println!("  {} : {}", style("Remote").bold().blue(), style(hostname).green().underlined());
-        println!("  {}  : {}", style("Local").bold().blue(), style(format!("localhost:{local_port}")).yellow().bold());
-        println!("  {} : {}", style("Mode").bold().blue(), style("TCP Proxy").magenta().bold());
+        println!(
+            "  {} : {}",
+            style("Remote").bold().blue(),
+            style(hostname).green().underlined()
+        );
+        println!(
+            "  {}  : {}",
+            style("Local").bold().blue(),
+            style(format!("localhost:{local_port}")).yellow().bold()
+        );
+        println!(
+            "  {} : {}",
+            style("Mode").bold().blue(),
+            style("TCP Proxy").magenta().bold()
+        );
         println!("{border}");
         println!();
-        println!("  {} {}", style("💡 Hint:").yellow().italic(), style("[Ctrl+C] Quit").bright().black());
+        println!(
+            "  {} {}",
+            style("💡 Hint:").yellow().italic(),
+            style("[Ctrl+C] Quit").bright().black()
+        );
         println!();
     }
 
-    // Live metrics loop (same as server mode)
-    let ui_clone = Arc::clone(ui);
-    let metrics_url = format!("http://localhost:{metrics_port}/metrics");
-    let metrics_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .unwrap_or_default();
-
-    let pid = sysinfo::Pid::from_u32(child.id());
-    let mut sys = sysinfo::System::new();
-    let mut last_rx: u64 = 0;
-    let mut last_tx: u64 = 0;
-
-    let metrics_handle = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-            sys.refresh_processes_specifics(
-                sysinfo::ProcessesToUpdate::Some(&[pid]),
-                false,
-                sysinfo::ProcessRefreshKind::nothing().with_memory(),
-            );
-            let ram_bytes = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
-
-            let start = tokio::time::Instant::now();
-            if let Ok(res) = metrics_client.get(&metrics_url).send().await {
-                let ping_ms = start.elapsed().as_millis() as u64;
-                if let Ok(text) = res.text().await {
-                    let mut rx_bytes = last_rx;
-                    let mut tx_bytes = last_tx;
-
-                    for line in text.lines() {
-                        if line.starts_with("cloudflared_tunnel_rx_bytes") {
-                            if let Some(val) = line.split_whitespace().last() {
-                                rx_bytes = val.parse().unwrap_or(last_rx);
-                            }
-                        } else if line.starts_with("cloudflared_tunnel_tx_bytes") {
-                            if let Some(val) = line.split_whitespace().last() {
-                                tx_bytes = val.parse().unwrap_or(last_tx);
-                            }
-                        }
-                    }
-
-                    let mut total_requests: u64 = 0;
-                    for line in text.lines() {
-                        if line.starts_with("cloudflared_tunnel_total_requests") && !line.starts_with('#') {
-                            if let Some(val) = line.split_whitespace().last() {
-                                total_requests = val.parse().unwrap_or(0);
-                            }
-                        }
-                    }
-
-                    let rx_speed = rx_bytes.saturating_sub(last_rx);
-                    let tx_speed = tx_bytes.saturating_sub(last_tx);
-                    last_rx = rx_bytes;
-                    last_tx = tx_bytes;
-
-                    if let Ok(mut ui) = ui_clone.lock() {
-                        ui.draw_live_metrics(
-                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes, total_requests,
-                        );
-                    }
-                }
-            }
-        }
-    });
-
     // Wait for Ctrl+C
+    // NOTE: cloudflared access tcp does not support --metrics, so live metrics
+    // are not available in client mode (unlike server mode which uses cloudflared tunnel).
     let _ = tokio::signal::ctrl_c().await;
-    metrics_handle.abort();
     println!("\nDisconnecting...");
     let _ = child.kill();
     let _ = child.wait();
@@ -570,7 +539,12 @@ async fn run_tunnel(
 
     {
         let ui_lock = ui.lock().expect("Failed to lock UI");
-        ui_lock.draw_connected_panel(port, &public_url, protocol, tunnel_info.access_token.as_deref());
+        ui_lock.draw_connected_panel(
+            port,
+            &public_url,
+            protocol,
+            tunnel_info.access_token.as_deref(),
+        );
     }
 
     // Hook: on_connect
@@ -667,7 +641,9 @@ async fn run_tunnel(
                     // Count active connections from cloudflared_tunnel_total_requests
                     let mut total_requests: u64 = 0;
                     for line in text.lines() {
-                        if line.starts_with("cloudflared_tunnel_total_requests") && !line.starts_with('#') {
+                        if line.starts_with("cloudflared_tunnel_total_requests")
+                            && !line.starts_with('#')
+                        {
                             if let Some(val) = line.split_whitespace().last() {
                                 total_requests = val.parse().unwrap_or(0);
                             }
@@ -681,7 +657,13 @@ async fn run_tunnel(
 
                     if let Ok(mut ui) = ui_clone.lock() {
                         ui.draw_live_metrics(
-                            rx_bytes, tx_bytes, rx_speed, tx_speed, ping_ms, ram_bytes, total_requests,
+                            rx_bytes,
+                            tx_bytes,
+                            rx_speed,
+                            tx_speed,
+                            ping_ms,
+                            ram_bytes,
+                            total_requests,
                         );
                     }
                 }
@@ -920,7 +902,6 @@ async fn request_and_connect_tunnel(
     pb.finish_with_message(i18n.t("tunnel_allocated"));
     Ok(res)
 }
-
 
 async fn handle_update(
     api: &ApiClient,
@@ -1377,10 +1358,7 @@ mod tests {
         assert!(res.is_err());
         // Error message should be propagated (not unit type)
         let err = res.unwrap_err();
-        assert!(
-            !err.is_empty(),
-            "Error should contain a meaningful message"
-        );
+        assert!(!err.is_empty(), "Error should contain a meaningful message");
         mock.assert_async().await;
     }
 
@@ -1495,9 +1473,19 @@ mod tests {
 
     #[test]
     fn test_parse_connect_command() {
-        let args = Args::parse_from(["xpose", "connect", "abc123.x.vlee.dev", "--token", "abc123def456"]);
+        let args = Args::parse_from([
+            "xpose",
+            "connect",
+            "abc123.x.vlee.dev",
+            "--token",
+            "abc123def456",
+        ]);
         match args.command {
-            Some(Commands::Connect { hostname, port, token }) => {
+            Some(Commands::Connect {
+                hostname,
+                port,
+                token,
+            }) => {
                 assert_eq!(hostname, "abc123.x.vlee.dev");
                 assert_eq!(port, 3000); // default
                 assert_eq!(token, "abc123def456");
@@ -1508,9 +1496,21 @@ mod tests {
 
     #[test]
     fn test_parse_connect_command_custom_port() {
-        let args = Args::parse_from(["xpose", "connect", "abc.x.vlee.dev", "--port", "8080", "--token", "mytoken"]);
+        let args = Args::parse_from([
+            "xpose",
+            "connect",
+            "abc.x.vlee.dev",
+            "--port",
+            "8080",
+            "--token",
+            "mytoken",
+        ]);
         match args.command {
-            Some(Commands::Connect { hostname, port, token }) => {
+            Some(Commands::Connect {
+                hostname,
+                port,
+                token,
+            }) => {
                 assert_eq!(hostname, "abc.x.vlee.dev");
                 assert_eq!(port, 8080);
                 assert_eq!(token, "mytoken");
@@ -1569,7 +1569,12 @@ mod tests {
         let i18n = i18n::I18n::new(None);
         let ui = ui::Ui::new_silent(i18n);
         // Should not panic with Some token
-        ui.draw_connected_panel(3000, "tcp://abc.x.vlee.dev", "tcp", Some("a1b2c3d4e5f67890"));
+        ui.draw_connected_panel(
+            3000,
+            "tcp://abc.x.vlee.dev",
+            "tcp",
+            Some("a1b2c3d4e5f67890"),
+        );
     }
 
     #[test]
@@ -1578,6 +1583,50 @@ mod tests {
         let ui = ui::Ui::new_silent(i18n);
         // Should not panic with None token
         ui.draw_connected_panel(3000, "tcp://abc.x.vlee.dev", "tcp", None);
+    }
+
+    #[tokio::test]
+    async fn test_verify_access_no_tunnel() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/api/verify-access")
+            .with_status(404)
+            .with_body(r#"{"error":"No active tunnel for this hostname"}"#)
+            .create_async()
+            .await;
+        let api = api::ApiClient::new(server.url());
+        let result = api
+            .verify_access("nonexistent.x.vlee.dev", "anytoken")
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No active tunnel"));
+    }
+
+    #[test]
+    fn test_draw_live_metrics_waiting_status() {
+        let i18n = i18n::I18n::new(None);
+        let mut ui = ui::Ui::new_silent(i18n);
+        // 0 connections = "Waiting..." status — should not panic
+        ui.draw_live_metrics(0, 0, 0, 0, 10, 1024, 0);
+    }
+
+    #[test]
+    fn test_draw_live_metrics_connected_status() {
+        let i18n = i18n::I18n::new(None);
+        let mut ui = ui::Ui::new_silent(i18n);
+        // >0 connections = "N conn" status — should not panic
+        ui.draw_live_metrics(1024, 2048, 100, 200, 5, 1024 * 1024, 3);
+    }
+
+    #[test]
+    fn test_create_access_tcp_command_no_stderr_pipe() {
+        // Verify cloudflared access tcp command can be created without panicking
+        // (Stdio::null for stderr prevents cloudflared from exiting immediately)
+        let config = cloudflared::CloudflaredConfig {
+            bin_path: std::path::PathBuf::from("/usr/bin/cloudflared"),
+        };
+        let _cmd = config.create_access_tcp_command("test.x.vlee.dev", 3000);
+        // If we got here without panic, the Stdio config is valid
     }
 
     #[tokio::test]

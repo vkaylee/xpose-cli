@@ -158,9 +158,7 @@ fn extract_zone_name(hostname: &str) -> &str {
 
 /// Looks up the Cloudflare zone ID for a domain name.
 async fn cf_get_zone_id(api_token: &str, zone_name: &str) -> worker::Result<String> {
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/zones?name={zone_name}&status=active"
-    );
+    let url = format!("https://api.cloudflare.com/client/v4/zones?name={zone_name}&status=active");
     let headers = Headers::new();
     headers.set("Authorization", &format!("Bearer {api_token}"))?;
 
@@ -173,9 +171,7 @@ async fn cf_get_zone_id(api_token: &str, zone_name: &str) -> worker::Result<Stri
     let text = resp.text().await.unwrap_or_default();
 
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        worker::Error::RustError(format!(
-            "CF get zone: invalid JSON (status {status}): {e}"
-        ))
+        worker::Error::RustError(format!("CF get zone: invalid JSON (status {status}): {e}"))
     })?;
 
     if !json["success"].as_bool().unwrap_or(false) {
@@ -209,9 +205,7 @@ async fn cf_route_dns(
     let zone_name = extract_zone_name(hostname);
     let zone_id = cf_get_zone_id(api_token, zone_name).await?;
 
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
-    );
+    let url = format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records");
     let body = serde_json::json!({
         "type": "CNAME",
         "name": hostname,
@@ -240,9 +234,7 @@ async fn cf_route_dns(
     }
 
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        worker::Error::RustError(format!(
-            "CF route DNS: invalid JSON (status {status}): {e}"
-        ))
+        worker::Error::RustError(format!("CF route DNS: invalid JSON (status {status}): {e}"))
     })?;
 
     if !json["success"].as_bool().unwrap_or(false) {
@@ -801,20 +793,39 @@ async fn handle_request_tunnel(mut req: Request, ctx: RouteContext<()>) -> Resul
                 // Reconfigure ingress only if port changed
                 if old_port != port {
                     let api_token = ctx.env.var(CF_TUNNEL_TOKEN_VAR).map(|v| v.to_string()).ok();
-                    let account_id = ctx.env.var("CLOUDFLARE_ACCOUNT_ID").map(|v| v.to_string()).ok();
+                    let account_id = ctx
+                        .env
+                        .var("CLOUDFLARE_ACCOUNT_ID")
+                        .map(|v| v.to_string())
+                        .ok();
                     if let (Some(api_token), Some(account_id), Some(ref cf_tunnel_id)) =
                         (&api_token, &account_id, &t.cf_tunnel_id)
                     {
-                        let hostname = t.public_url.as_deref().unwrap_or("").trim_start_matches("tcp://");
+                        let hostname = t
+                            .public_url
+                            .as_deref()
+                            .unwrap_or("")
+                            .trim_start_matches("tcp://");
                         if let Err(e) = cf_configure_ingress(
-                            account_id, api_token, cf_tunnel_id, hostname, port, &protocol,
-                        ).await {
+                            account_id,
+                            api_token,
+                            cf_tunnel_id,
+                            hostname,
+                            port,
+                            &protocol,
+                        )
+                        .await
+                        {
                             console_log!("[Sticky] Ingress reconfigure failed (non-fatal): {}", e);
                         }
                     }
                 }
 
-                console_log!("[Sticky] Reusing tunnel {} for device {}", t.name, body.device_id);
+                console_log!(
+                    "[Sticky] Reusing tunnel {} for device {}",
+                    t.name,
+                    body.device_id
+                );
                 return Response::from_json(&serde_json::json!({
                     "success": true,
                     "message": "Reconnected (sticky)",
